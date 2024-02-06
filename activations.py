@@ -1,7 +1,7 @@
 """This module provides activation functions.
 
 Classes
-========
+=======
 - :class:`ScaledSoftmax`: The temperature-scaled softmax.
 - :class:`Triangle`: The triangle activation function.
 """

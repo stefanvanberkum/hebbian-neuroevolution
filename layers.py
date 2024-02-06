@@ -3,7 +3,8 @@
 The methods in this module are based the paper and corresponding code by [1]_.
 
 Classes
-=========
+=======
+- :class:`BNConvTriangle`: Combination of batch normalization, Hebbian convolution, and triangle activation.
 - :class:`HebbConv2d`: Hebbian convolution.
 
 References
@@ -16,10 +17,44 @@ import math
 
 import torch
 from torch import Tensor
-from torch.nn import Module, ReflectionPad2d
+from torch.nn import BatchNorm2d, Module, ReflectionPad2d
 from torch.nn.functional import conv2d
 
-from activations import ScaledSoftmax2d
+from activations import RePUTriangle, ScaledSoftmax2d, Triangle
+
+
+class BNConvTriangle(Module):
+    """Combination of batch normalization, Hebbian convolution, and (RePU) triangle activation.
+
+    This combination is used in SoftHebb networks. A RePU triangle is used if ``p`` is not ``None``.
+
+    :param in_channels: The number of input channels.
+    :param out_channels: The number of output channels.
+    :param kernel_size: The kernel size.
+    :param eta: The base learning rate.
+    :param stride: The stride for convolution (default: 1).
+    :param dilation: The dilation for convolution (default: 1).
+    :param temp: The temperature for the softmax operation (default: 1).
+    :param p: The power for the RePU triangle (optional).
+    """
+
+    def __init__(self, in_channels: int, out_channels: int, kernel_size: int | tuple[int, int], eta: float, stride=1,
+                 dilation=1, temp=1.0, p: float | None = None):
+        super(BNConvTriangle, self).__init__()
+
+        self.bn = BatchNorm2d(num_features=in_channels, affine=False)
+        self.conv = HebbConv2d(in_channels, out_channels, kernel_size, eta, stride, dilation, temp)
+
+        if p is None:
+            self.activation = Triangle()
+        else:
+            self.activation = RePUTriangle(p)
+
+    def forward(self, x: Tensor):
+        x = self.bn(x)
+        x = self.conv(x)
+        x = self.activation(x)
+        return x
 
 
 class HebbConv2d(Module):
