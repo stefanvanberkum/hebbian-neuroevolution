@@ -8,24 +8,25 @@ Classes
 
 import torch
 from torch import Tensor
-from torch.nn import ReLU, Softmax
+from torch.nn import ReLU, Softmax2d
 
 
-class ScaledSoftmax(Softmax):
-    """The temperature-scaled softmax.
+class ScaledSoftmax2d(Softmax2d):
+    """The temperature-scaled 2D softmax.
 
-    This class extends PyTorch's Softmax class but scales the logits by a temperature parameter.
+    This class extends PyTorch's Softmax2d class but scales the logits by a temperature parameter. It applies the
+    softmax operation to each spatial location.
 
-    :ivar temp: The temperature.
+    :ivar temp: The temperature (default: 1).
     """
 
-    def __init__(self, dim=None, temp=1):
-        super(ScaledSoftmax, self).__init__(dim)
+    def __init__(self, temp=1.0):
+        super(ScaledSoftmax2d, self).__init__()
 
         self.temp = temp
 
-    def forward(self, input: Tensor):
-        return super(ScaledSoftmax, self).forward(input / self.temp)
+    def forward(self, x: Tensor):
+        return super(ScaledSoftmax2d, self).forward(x / self.temp)
 
 
 class Triangle(ReLU):
@@ -33,25 +34,30 @@ class Triangle(ReLU):
 
     This class extends PyTorch's ReLU class but subtracts the channel-wise mean from each input. It works for image
     data with shape (C_in, H, W) or a batched version (N, C_in, H, W).
-
-    :ivar p: Power to apply before ReLU (optional).
     """
 
-    def __init__(self, p=None):
+    def __init__(self):
         super(Triangle, self).__init__()
+
+    def forward(self, x: Tensor):
+        # Channel dimension is 0 if x.dim() == 3 and 1 if x.dim() == 4.
+        return super(Triangle, self).forward(x - torch.mean(x, dim=x.dim() - 3))
+
+
+class RePUTriangle(ReLU):
+    """The RePU triangle activation.
+
+    This class extends PyTorch's ReLU class but subtracts the channel-wise mean from each input. It works for image
+    data with shape (C_in, H, W) or a batched version (N, C_in, H, W).
+
+    :ivar p: Power to apply before ReLU.
+    """
+
+    def __init__(self, p):
+        super(RePUTriangle, self).__init__()
 
         self.p = p
 
-    def forward(self, input: Tensor):
-        if len(input.shape) == 3:
-            # One sample, input shape: (C_in, H, W).
-            if self.p is None or self.p == 1:
-                return super(Triangle, self).forward(input - torch.mean(input, dim=0))
-            else:
-                return super(Triangle, self).forward(torch.pow(input - torch.mean(input, dim=0), self.p))
-        else:
-            # Batch, input shape: (N, C_in, H, W).
-            if self.p is None or self.p == 1:
-                return super(Triangle, self).forward(input - torch.mean(input, dim=1))
-            else:
-                return super(Triangle, self).forward(torch.pow(input - torch.mean(input, dim=1), self.p))
+    def forward(self, x: Tensor):
+        # Channel dimension is 0 if x.dim() == 3 and 1 if x.dim() == 4.
+        return super(RePUTriangle, self).forward(torch.pow(x - torch.mean(x, dim=x.dim() - 3), self.p))
