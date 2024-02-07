@@ -87,11 +87,11 @@ class HebbConv2d(Module):
         self.softmax = ScaledSoftmax2d(temp)
 
         # Compute padding.
-        if kernel_size[0] % 2 == 0 or kernel_size[1] % 2 == 0:
+        if self.kernel_size[0] % 2 == 0 or self.kernel_size[1] % 2 == 0:
             raise ValueError(f"Kernel size must be odd, received {self.kernel_size}.")
-        effective_height = self.kernel_size[0] + (self.kernel_size[0] - 1) * self.dilation
+        effective_height = self.kernel_size[0] + (self.kernel_size[0] - 1) * (self.dilation - 1)
         vertical_pad = (effective_height - 1) // 2
-        effective_width = self.kernel_size[1] + (self.kernel_size[1] - 1) * self.dilation
+        effective_width = self.kernel_size[1] + (self.kernel_size[1] - 1) * (self.dilation - 1)
         horizontal_pad = (effective_width - 1) // 2
         self.pad = ReflectionPad2d((horizontal_pad, horizontal_pad, vertical_pad, vertical_pad))
 
@@ -121,7 +121,7 @@ class HebbConv2d(Module):
 
         # Update if in training mode.
         if self.training:
-            self.update(x, u)
+            self._update(x, u)
         return u
 
     def _initialize(self):
@@ -182,7 +182,7 @@ class HebbConv2d(Module):
         delta_w.div_(max_val + 1e-30)
 
         # Apply update and update learning rate.
-        self.weight.add_(self.lr * delta_w)
+        self.weight.add_(self.lr.view(-1, 1, 1, 1) * delta_w)
         self._update_lr()
 
     def _get_norm(self, update=False):
@@ -203,4 +203,4 @@ class HebbConv2d(Module):
         epsilon = 1e-10  # Small number for numerical stability, as in original work.
 
         weight_norm = self._get_norm(update=True)
-        self.lr = self.eta * torch.sqrt(weight_norm - 1 + epsilon)
+        self.lr = self.eta * torch.sqrt(torch.abs(weight_norm - 1) + epsilon)

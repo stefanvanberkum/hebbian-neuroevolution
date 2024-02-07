@@ -41,7 +41,7 @@ class Triangle(ReLU):
 
     def forward(self, x: Tensor):
         # Channel dimension is 0 if x.dim() == 3 and 1 if x.dim() == 4.
-        return super(Triangle, self).forward(x - torch.mean(x, dim=x.dim() - 3))
+        return super(Triangle, self).forward(x - torch.mean(x, dim=x.dim() - 3, keepdim=True))
 
 
 class RePUTriangle(ReLU):
@@ -60,4 +60,4 @@ class RePUTriangle(ReLU):
 
     def forward(self, x: Tensor):
         # Channel dimension is 0 if x.dim() == 3 and 1 if x.dim() == 4.
-        return super(RePUTriangle, self).forward(torch.pow(x - torch.mean(x, dim=x.dim() - 3), self.p))
+        return torch.pow(super(RePUTriangle, self).forward(x - torch.mean(x, dim=x.dim() - 3, keepdim=True)), self.p)

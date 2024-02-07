@@ -68,6 +68,7 @@ class SoftHebbSmall(Module):
         super(SoftHebbSmall, self).__init__()
 
         self.layer_1 = BNConvTriangle(in_channels=3, out_channels=96, kernel_size=5, eta=0.08, temp=1, p=0.7)
+        self.layer_1
         self.pool_1 = MaxPool2d(kernel_size=4, stride=2, padding=1)
         self.layer_2 = BNConvTriangle(in_channels=96, out_channels=384, kernel_size=3, eta=0.005, temp=1 / 0.65, p=1.4)
         self.pool_2 = MaxPool2d(kernel_size=4, stride=2, padding=1)
