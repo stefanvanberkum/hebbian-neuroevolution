@@ -51,6 +51,12 @@ class BNConvTriangle(Module):
             self.activation = RePUTriangle(p)
 
     def forward(self, x: Tensor):
+        """Forward pass.
+
+        :param x: Tensor of shape (N, C_in, H, W) or (C_in, H, W).
+        :return: Output tensor of shape (N, C_out, H, W).
+        """
+
         x = self.bn(x)
         x = self.conv(x)
         x = self.activation(x)

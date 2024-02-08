@@ -24,12 +24,30 @@ from models import Classifier, HebbNet, SoftHebbSmall
 
 
 def train(encoder: Module, classifier: Module, data: Dataset, n_epochs: int, encoder_batch: int, classifier_batch: int,
-          n_workers=0, verbose=True, validation_data=None, val_batch=64):
+          n_workers=0, verbose=False, validation_data=None, val_batch=64):
+    """Train an encoder network and final classifier sequentially.
+
+    Both training processes utilize automatic mixed precision in combination with gradient scaling.
+
+    :param encoder: The Hebbian encoder network.
+    :param classifier: The classifier.
+    :param data: The training data.
+    :param n_epochs: The number of epochs for supervised training of the classifier.
+    :param encoder_batch: The batch size for Hebbian training of the encoder network.
+    :param classifier_batch: The batch size for supervised training of the classifier.
+    :param n_workers: The number of workers (default: 0, i.e., run in the main process).
+    :param verbose: True if progress should be printed (default: False).
+    :param validation_data: Validation data used for testing, only used if ``verbose`` is ``True`` (default: None).
+    :param val_batch: Batch size for testing on the validation data (default: 64).
+    :return: A trained network comprising the encoder and classifier.
+    """
+
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     encoder.to(device)
     classifier.to(device)
 
     # Train encoder and classifier.
+    start_time = None
     if verbose:
         print("Training encoder...")
         start_time = time()
@@ -47,35 +65,61 @@ def train(encoder: Module, classifier: Module, data: Dataset, n_epochs: int, enc
     return model
 
 
-def train_encoder(encoder: Module, data: Dataset, batch_size: int, device, n_workers=0):
-    # Setup dataloader.
+def train_encoder(encoder: Module, data: Dataset, batch_size: int, device: str, n_workers=0):
+    """Train the encoder using Hebbian learning.
+
+    :param encoder: The Hebbian encoder network.
+    :param data: The training data.
+    :param batch_size: The batch size.
+    :param device: The device used for PyTorch operations.
+    :param n_workers: The number of workers (default: 0, i.e., run in the main process).
+    """
+
     loader = DataLoader(data, batch_size=batch_size, num_workers=n_workers, drop_last=True)
 
+    # Training loop.
     encoder.train()
     with autocast(device_type=device, dtype=torch.float16):
         for i, data in enumerate(loader):
             # Run data through encoder for unsupervised Hebbian learning.
             x, _ = data
+            x = x.to(device)
             encoder(x)
 
 
-def train_classifier(encoder: Module, classifier: Module, data: Dataset, n_epochs: int, batch_size: int, device,
+def train_classifier(encoder: Module, classifier: Module, data: Dataset, n_epochs: int, batch_size: int, device: str,
                      n_workers=0, verbose=True, validation_data=None, val_batch=64):
-    # Setup dataloader.
+    """Train the classifier using supervised learning.
+
+    :param encoder: The Hebbian encoder network.
+    :param classifier: The classifier.
+    :param data: The training data.
+    :param n_epochs: The number of epochs for training.
+    :param batch_size: The batch size.
+    :param device: The device used for PyTorch operations.
+    :param n_workers: The number of workers (default: 0, i.e., run in the main process).
+    :param verbose: True if progress should be printed (default: False).
+    :param validation_data: Validation data used for testing, only used if ``verbose`` is ``True`` (default: None).
+    :param val_batch: Batch size for testing on the validation data (default: 64).
+    """
+
+    # Set up dataloader.
     loader = DataLoader(data, batch_size=batch_size, shuffle=True, num_workers=n_workers, drop_last=True)
 
+    # Set up loss function, optimizer, learning rate scheduler, and gradient scaler.
     loss_fn = CrossEntropyLoss()
     optimizer = Adam(classifier.parameters())
     scheduler = CosineAnnealingLR(optimizer, T_max=n_epochs)
     scaler = GradScaler()
 
-    encoder.eval()
-    classifier.train()
+    # Training loop.
     cumulative_loss = 0
     n_correct = 0
     batches = 0
     samples = 0
     for epoch in range(n_epochs):
+        encoder.eval()
+        classifier.train()
         for i, data in enumerate(loader):
             # Reset gradients.
             optimizer.zero_grad()
@@ -83,6 +127,8 @@ def train_classifier(encoder: Module, classifier: Module, data: Dataset, n_epoch
             with autocast(device_type=device, dtype=torch.float16):
                 # Run batch through encoder and classifier.
                 x, y = data
+                x = x.to(device)
+                y = y.to(device)
                 x = encoder(x)
                 logits = classifier(x)
                 loss = loss_fn(logits, y)
@@ -99,7 +145,9 @@ def train_classifier(encoder: Module, classifier: Module, data: Dataset, n_epoch
                 batches += 1
                 samples += len(y)
 
+        # Update learning rate.
         scheduler.step()
+
         if verbose and (epoch == 0 or (epoch + 1) % (n_epochs // 10) == 0):
             # Print and reset loss and accuracy.
             loss = cumulative_loss / batches
@@ -107,7 +155,7 @@ def train_classifier(encoder: Module, classifier: Module, data: Dataset, n_epoch
             if validation_data is None:
                 print(f"- Epoch {epoch + 1}: train loss {loss:.4f}, train accuracy {acc:.2f}%")
             else:
-                val_acc = test(HebbNet(encoder, classifier), validation_data, val_batch, n_workers)
+                val_acc = test(HebbNet(encoder, classifier), validation_data, val_batch, device, n_workers)
                 print(f"- Epoch {epoch + 1}: train loss {loss:.4f}, train accuracy {acc:.2f}%, validation accuracy "
                       f"{val_acc:.2f}%")
             cumulative_loss = 0
@@ -116,15 +164,29 @@ def train_classifier(encoder: Module, classifier: Module, data: Dataset, n_epoch
             samples = 0
 
 
-def test(model: Module, data: Dataset, batch_size: int, n_workers=0):
+def test(model: Module, data: Dataset, batch_size: int, device: str, n_workers=0):
+    """Test the model.
+
+    :param model: The model comprising an encoder and classifier.
+    :param data: The test data.
+    :param batch_size: The batch size.
+    :param device: The device used for PyTorch operations.
+    :param n_workers: The number of workers (default: 0, i.e., run in the main process).
+    :return: The test accuracy (percentage).
+    """
+
     # Setup dataloader.
     loader = DataLoader(data, batch_size=batch_size, num_workers=n_workers)
 
+    # Test loop.
+    model.eval()
     n_correct = 0
     samples = 0
     for i, data in enumerate(loader):
         # Run batch through model and get number of correct predictions.
         x, y = data
+        x = x.to(device)
+        y = y.to(device)
         logits = model(x)
         n_correct += torch.sum(torch.argmax(logits, dim=1) == y).item()
         samples += len(y)
@@ -139,8 +201,12 @@ if __name__ == '__main__':
     parser.add_argument('--n_epochs', type=int, help="The number of epochs for SGD training.")
     parser.add_argument('--hebb_batch', type=int, help="The batch size for Hebbian training.")
     parser.add_argument('--sgd_batch', type=int, help="The batch size for SGD training.")
+    parser.add_argument('--fast', default=True, type=bool,
+                        help="True if a fast version of the dataset should be used. Only works for MNIST and CIFAR10 "
+                             "" + "(default: True).")
     parser.add_argument('--n_workers', default=0, type=int,
-                        help="The batch size for SGD training (default: 0, i.e.., run in the main process).")
+                        help="The batch size for SGD training (default: 0, i.e., run in the main process). Has to be "
+                             "" + "set to zero if a fast-mode dataset is used.")
     args = parser.parse_args()
 
     # Load data.
@@ -150,7 +216,7 @@ if __name__ == '__main__':
     else:
         raise RuntimeError(f"Dataset {args.dataset} not found (internal error).")
 
-    train_data, test_data = load(args.dataset)
+    train_data, test_data = load(args.dataset, fast=args.fast)
 
     # Get setup.
     if args.model == 'SoftHebbSmall':
@@ -160,7 +226,10 @@ if __name__ == '__main__':
     else:
         raise RuntimeError(f"Model {args.model} not found (internal error).")
 
+    # Train and test model.
     trained_model = train(encoder_net, classifier_net, train_data, args.n_epochs, args.hebb_batch, args.sgd_batch,
-                          n_workers=args.n_workers, validation_data=test_data)
-    test_acc = test(trained_model, test_data, args.sgd_batch, args.n_workers)
+                          n_workers=args.n_workers, verbose=True, validation_data=test_data)
+
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    test_acc = test(trained_model, test_data, args.sgd_batch, device, args.n_workers)
     print(f"Test accuracy: {test_acc:.2f}")
