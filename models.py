@@ -50,6 +50,11 @@ class HebbianEncoder(Module):
     This network is constructed using evolved cells.
     """
 
+    def __init__(self, in_features: int, normal_cell, reduction_cell, n_channels: int):
+        super(HebbianEncoder, self).__init__()
+
+        # Translate cells into model.
+
 
 class Classifier(Module):
     """Linear classifier module for Hebbian networks.
