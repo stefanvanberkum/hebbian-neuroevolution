@@ -38,8 +38,8 @@ class BNConvTriangle(Module):
     :param p: The power for the RePU triangle (optional).
     """
 
-    def __init__(self, in_channels: int, out_channels: int, kernel_size: int | tuple[int, int], eta: float, stride=1,
-                 dilation=1, temp=1.0, p: float | None = None):
+    def __init__(self, in_channels: int, out_channels: int, kernel_size: int | tuple[int, int], eta: float,
+                 stride: int | tuple[int, int] = 1, dilation=1, temp=1.0, p: float | None = None):
         super(BNConvTriangle, self).__init__()
 
         self.bn = BatchNorm2d(num_features=in_channels, affine=False)
@@ -68,18 +68,17 @@ class HebbConv2d(Module):
 
     Applies reflective padding to ensure that the input shape equals the output shape.
 
-    :ivar in_channels: The number of input channels.
-    :ivar out_channels: The number of output channels.
-    :ivar kernel_size: The kernel size.
-    :ivar eta: The base learning rate.
-    :ivar stride: The stride for convolution (default: 1).
-    :ivar dilation: The dilation for convolution (default: 1).
-
+    :param in_channels: The number of input channels.
+    :param out_channels: The number of output channels.
+    :param kernel_size: The kernel size.
+    :param eta: The base learning rate.
+    :param stride: The stride for convolution (default: 1).
+    :param dilation: The dilation for convolution (default: 1).
     :param temp: The temperature for the softmax operation (default: 1).
     """
 
-    def __init__(self, in_channels: int, out_channels: int, kernel_size: int | tuple[int, int], eta: float, stride=1,
-                 dilation=1, temp=1.0):
+    def __init__(self, in_channels: int, out_channels: int, kernel_size: int | tuple[int, int], eta: float,
+                 stride: int | tuple[int, int] = 1, dilation=1, temp=1.0):
         super(HebbConv2d, self).__init__()
 
         self.in_channels = in_channels
@@ -210,3 +209,51 @@ class HebbConv2d(Module):
 
         weight_norm = self._get_norm(update=True)
         self.lr = self.eta * torch.sqrt(torch.abs(weight_norm - 1) + epsilon)
+
+
+class Zero(Module):
+    """Module that zeroes out the input.
+
+    :param stride: The stride to be used for the operation.
+    """
+
+    def __init__(self, stride=1):
+        super(Zero, self).__init__()
+
+        self.stride = stride
+
+    def forward(self, x: Tensor):
+        """Forward pass.
+
+        :param x: Input tensor.
+        :return: A zero tensor.
+        """
+
+        out_shape = x.shape
+
+        # Divide height and width by the stride.
+        out_shape[2] //= self.stride
+        out_shape[3] //= self.stride
+
+        return torch.zeros(out_shape)
+
+
+class Identity(Module):
+    """Module that applies an identity operation.
+
+    :param stride: The stride to be used for the operation.
+    """
+
+    def __init__(self, stride=1):
+        super(Identity, self).__init__()
+
+        self.stride = stride
+
+    def forward(self, x: Tensor):
+        """Forward pass.
+
+        :param x: Input tensor.
+        :return: The output tensor.
+        """
+
+        return x[:, :, ::self.stride, ::self.stride]

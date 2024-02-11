@@ -9,10 +9,12 @@ Classes
 """
 
 import torch
+from networkx import topological_generations, topological_sort
 from torch import Tensor
-from torch.nn import AvgPool2d, Dropout, Flatten, Linear, MaxPool2d, Module
+from torch.nn import AvgPool2d, Dropout, Flatten, Linear, MaxPool2d, Module, ModuleList, Sequential
 
-from layers import BNConvTriangle
+from evolution import Architecture, Cell
+from layers import BNConvTriangle, Identity, Zero
 
 
 class HebbNet(Module):
@@ -20,6 +22,12 @@ class HebbNet(Module):
 
     This network can only be used for inference. To train the individual components, use the corresponding methods in
     ``training.py``.
+
+    :ivar encoder: The encoder network.
+    :ivar classifier: The final classifier.
+
+    :param encoder: The encoder network.
+    :param classifier: The final classifier.
     """
 
     def __init__(self, encoder: Module, classifier: Module):
@@ -50,16 +58,116 @@ class HebbianEncoder(Module):
     This network is constructed using evolved cells.
     """
 
-    def __init__(self, in_features: int, normal_cell, reduction_cell, n_channels: int):
+    def __init__(self, in_features: int, architecture: Architecture, n_channels: int, stack_size: int):
         super(HebbianEncoder, self).__init__()
 
-        # Translate cells into model.
+        # Translate cells into modules.
+
+
+class HebbianCell(Module):
+    """Module from a network cell."""
+
+    def __int__(self, cell: Cell, in_channels: int, out_channels: int, stride: int):
+        super(HebbianCell, self).__init__()
+
+        self.cell = cell
+        self.generations = list(topological_generations(cell))
+        self.nodes = list(topological_sort(cell))  # Ensures appropriate order of operations.
+        self.inputs = []  # List of (left, right) tuples recording each node's inputs.
+        self.n_ops = len(self.nodes) - 2
+
+        # Translate pairwise operations.
+        self.layers = ModuleList()
+        for node in self.nodes:
+            if node != 0 and node != 1:
+                # Get inputs and corresponding operations.
+                (left, _, op_left), (right, _, op_right) = list(cell.in_edges(node, data=True))
+                self.inputs += [(left, right)]
+
+                # TODO: Does it apply stride to the first inputs or preprocess?
+
+                # Translate and register operations.
+                if left == 0 or left == 1:
+                    # Apply the given stride (i.e., one for a normal cell and two for a reduction cell).
+                    self.layers.append(self.translate(op_left, in_channels, out_channels, stride))
+                else:
+                    self.layers.append(self.translate(op_left, in_channels, out_channels, stride=1))
+                if right == 0 or right == 1:
+                    # Apply the given stride (i.e., one for a normal cell and two for a reduction cell).
+                    self.layers.append(self.translate(op_right, in_channels, out_channels, stride))
+                else:
+                    self.layers.append(self.translate(op_right, in_channels, out_channels, stride=1))
+
+    def forward(self, x_skip: Tensor, x: Tensor):
+
+        # Record intermediate outputs.
+        out = [Tensor()] * (self.n_ops + 2)
+        out[0] = x_skip
+        out[1] = x
+
+        for node in range(self.n_ops):
+            if node != 0 and node != 1:
+                left, right = self.inputs[node]
+
+                # Apply operation to the left input.
+                x_left = self.layers[2 * node](out[left])
+
+                # Apply operation to the right input.
+                x_right = self.layers[2 * node + 1](out[right])
+
+                # Add result.
+                out[node] = torch.add(x_left, x_right)
+
+    @staticmethod
+    def translate(op: str, in_channels: int, out_channels: int, stride: int):
+        """Translate an operation from string name to the corresponding PyTorch module.
+
+        :param op: The operation name.
+        :param in_channels: The number of input channels.
+        :param out_channels: The number of output channels.
+        :param stride: The stride to be used for the operation.
+        :return: The corresponding PyTorch module.
+        """
+
+        eta = 0.01
+
+        if op == 'zero':
+            # Set everything to zero (i.e., ignore input).
+            return Zero(stride=stride)
+        elif op == 'identity':
+            # No operation (i.e., raw input).
+            return Identity(stride=stride)
+        elif op == 'avg_pool_3':
+            # 3x3 average pooling.
+            return AvgPool2d(kernel_size=3, stride=stride, padding=1)
+        elif op == 'max_pool_3':
+            # 3x3 max pooling.
+            return MaxPool2d(kernel_size=3, stride=stride, padding=1)
+        elif op == 'conv_1':
+            # 1x1 Hebbian convolution.
+            return BNConvTriangle(in_channels, out_channels, kernel_size=1, eta=eta, stride=stride)
+        elif op == 'conv_3':
+            # 3x3 Hebbian convolution.
+            return BNConvTriangle(in_channels, out_channels, kernel_size=3, eta=eta, stride=stride)
+        elif op == 'conv_13_31':
+            # 1x3 and then 3x1 Hebbian convolution.
+            conv_13 = BNConvTriangle(in_channels, out_channels, kernel_size=(1, 3), eta=eta, stride=(1, stride))
+            conv_31 = BNConvTriangle(in_channels, out_channels, kernel_size=(3, 1), eta=eta, stride=(stride, 1))
+            return Sequential(conv_13, conv_31)
+        elif op == 'dilated_conv_5':
+            # 5x5 dilated Hebbian convolution (i.e., 3x3 with dilation=2).
+            return BNConvTriangle(in_channels, out_channels, kernel_size=3, eta=eta, stride=stride, dilation=2)
+        else:
+            raise ValueError(f"Operation {op} not found (internal error).")
 
 
 class Classifier(Module):
     """Linear classifier module for Hebbian networks.
 
     This module flattens the input, applies dropout, and ends with a linear layer. It returns logits.
+
+    :param in_features: The number of input features.
+    :param out_features: The number of output features.
     """
 
     def __init__(self, in_features: int, out_features: int):
