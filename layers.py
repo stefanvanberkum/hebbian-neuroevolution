@@ -1,16 +1,9 @@
-"""This module provides a PyTorch implementation of the SoftHebb convolution.
-
-The methods in this module are based the paper and corresponding code by [1]_.
+"""This module provides PyTorch layers.
 
 Classes
 =======
 - :class:`BNConvTriangle`: Combination of batch normalization, Hebbian convolution, and triangle activation.
 - :class:`HebbConv2d`: Hebbian convolution.
-
-References
-==========
-.. [1] Journé, A., Garcia Rodriguez, H., Guo, Q., & Moraitis, T. (2023). Hebbian deep learning without feedback.
-    *International Conference on Learning Representations (ICLR)*. https://openreview.net/forum?id=8gd4M-_Rj1
 """
 
 import math
@@ -66,7 +59,13 @@ class BNConvTriangle(Module):
 class HebbConv2d(Module):
     """Hebbian convolution.
 
-    Applies reflective padding to ensure that the input shape equals the output shape.
+    Applies reflective padding to ensure that the input shape equals the output shape. This method is based on the
+    paper and corresponding code by [1]_.
+
+    References
+    ==========
+    .. [1] Journé, A., Garcia Rodriguez, H., Guo, Q., & Moraitis, T. (2023). Hebbian deep learning without feedback.
+        *International Conference on Learning Representations (ICLR)*.
 
     :param in_channels: The number of input channels.
     :param out_channels: The number of output channels.
@@ -257,3 +256,39 @@ class Identity(Module):
         """
 
         return x[:, :, ::self.stride, ::self.stride]
+
+
+class FactorizedReduction(Module):
+    """Module that halves the input shape (height and width) without information loss.
+
+    It applies two 1x1 convolutions with stride 2 and concatenates the result along the channel dimension. By taking
+    half of the desired number of filters for each convolution, the concatenated result has the right shape. This
+    method is based on the papers and corresponding code by [1]_ and [2]_.
+
+    References
+    ==========
+    .. [1] Real, E., Aggarwal, A., Huang, Y., & Le, Q. v. (2019). Regularized evolution for image classifier
+        architecture search. AAAI Conference on Artificial Intelligence, 33(01), 4780–4789.
+    .. [2] Zhou, D., Zhou, X., Zhang, W., Loy, C. C., Yi, S., Zhang, X., & Ouyang, W. (2020). EcoNAS: Finding proxies
+        for economical neural architecture search. Computer Vision and Pattern Recognition (CVPR), 11396–11404.
+    """
+
+    def __init__(self, in_channels: int, out_channels: int, eta: float):
+        super(FactorizedReduction, self).__init__()
+
+        if out_channels % 2 != 0:
+            raise ValueError(
+                f"The number of filters needs to be even for factorized reduction, received " + f"{out_channels}.")
+
+        self.conv_1 = BNConvTriangle(in_channels, out_channels // 2, 1, eta)
+        self.conv_2 = BNConvTriangle(in_channels, out_channels // 2, 1, eta)
+
+    def forward(self, x: Tensor):
+        """Forward pass.
+
+        :param x: Input tensor.
+        :return: The output tensor.
+        """
+
+        x = torch.cat((self.conv_1(x), self.conv_2(x[:, :, 1:, 1:])), dim=1)
+        return x

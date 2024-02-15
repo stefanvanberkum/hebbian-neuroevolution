@@ -7,14 +7,13 @@ Classes
 - :class:`Classifier`: Linear classifier module for Hebbian networks.
 - :class:`SoftHebbSmall`: The small SoftHebb encoder network for CIFAR-10.
 """
-
 import torch
-from networkx import topological_generations, topological_sort
+from networkx import topological_sort
 from torch import Tensor
-from torch.nn import AvgPool2d, Dropout, Flatten, Linear, MaxPool2d, Module, ModuleList, Sequential
+from torch.nn import AdaptiveAvgPool2d, AvgPool2d, Dropout, Flatten, Linear, MaxPool2d, Module, ModuleList, Sequential
 
 from evolution import Architecture, Cell
-from layers import BNConvTriangle, Identity, Zero
+from layers import BNConvTriangle, FactorizedReduction, Identity, Zero
 
 
 class HebbNet(Module):
@@ -55,56 +54,181 @@ class HebbNet(Module):
 class HebbianEncoder(Module):
     """Modular Hebbian encoder network.
 
-    This network is constructed using evolved cells.
+    This network is constructed using evolved cells. It has two reduction cells with a stack of normal cells on
+    either side (i.e., N-R-N-R-N).
+
+    :param in_channels: The number of input channels.
+    :param architecture: An evolved architecture.
+    :param n_channels: The initial number of channels (doubled after each reduction layer).
+    :param stack_size: The number of normal cells between reduction cells.
+    :param eta: The base learning rate used in SoftHebb convolutions.
     """
 
-    def __init__(self, in_features: int, architecture: Architecture, n_channels: int, stack_size: int):
+    def __init__(self, in_channels: int, architecture: Architecture, n_channels: int, stack_size: int, eta: float):
         super(HebbianEncoder, self).__init__()
 
-        # Translate cells into modules.
+        normal_cell = architecture.normal_cell
+        reduction_cell = architecture.reduction_cell
+
+        self.cells = ModuleList()
+
+        # First stack of normal cells.
+        skip_channels = in_channels
+        out_channels = n_channels
+        for n in range(stack_size):
+            cell = HebbianCell(normal_cell, in_channels, skip_channels, out_channels, eta)
+            self.cells.append(cell)
+            skip_channels = in_channels  # The next skip input is the current input.
+            in_channels = cell.out_channels  # The next direct input is the current output.
+
+        # First reduction cell.
+        cell = HebbianCell(reduction_cell, in_channels, skip_channels, out_channels, eta, stride=2)
+        self.cells.append(cell)
+        skip_channels = in_channels  # The next skip input is the current input.
+        in_channels = cell.out_channels  # The next direct input is the current output.
+        out_channels *= 2  # Double the number of filters.
+
+        # Second stack of normal cells.
+        for n in range(stack_size):
+            if n == 0:
+                cell = HebbianCell(normal_cell, in_channels, skip_channels, out_channels, eta, follows_reduction=True)
+            else:
+                cell = HebbianCell(normal_cell, in_channels, skip_channels, out_channels, eta)
+            self.cells.append(cell)
+            skip_channels = in_channels  # The next skip input is the current input.
+            in_channels = cell.out_channels  # The next direct input is the current output.
+
+        # Second reduction cell.
+        cell = HebbianCell(reduction_cell, in_channels, skip_channels, out_channels, eta, stride=2)
+        self.cells.append(cell)
+        skip_channels = in_channels  # The next skip input is the current input.
+        in_channels = cell.out_channels  # The next direct input is the current output.
+        out_channels *= 2  # Double the number of filters.
+
+        # Third stack of normal cells.
+        for n in range(stack_size):
+            if n == 0:
+                cell = HebbianCell(normal_cell, in_channels, skip_channels, out_channels, eta, follows_reduction=True)
+            else:
+                cell = HebbianCell(normal_cell, in_channels, skip_channels, out_channels, eta)
+            self.cells.append(cell)
+            skip_channels = in_channels  # The next skip input is the current input.
+            in_channels = cell.out_channels  # The next direct input is the current output.
+
+        # Global average pooling.
+        self.pool = AdaptiveAvgPool2d(output_size=1)
+
+    @torch.no_grad()
+    def forward(self, x: Tensor):
+        """Forward pass.
+
+        :param x: The input image.
+        :return: The feature encoding.
+        """
+
+        # Run input through the cells.
+        x_skip = x
+        for cell in self.cells:
+            x_next = cell(x, x_skip)
+            x_skip = x
+            x = x_next
+
+        # Apply global average pooling.
+        x = self.pool(x)
+
+        return x
 
 
 class HebbianCell(Module):
-    """Module from a network cell."""
+    """Module from a network cell.
 
-    def __int__(self, cell: Cell, in_channels: int, out_channels: int, stride: int):
+    All inputs are preprocessed if necessary using either 1x1 convolutions or a factorized reduction. If this cell
+    follows a reduction cell, the spatial shape of the skip input is reduced using a factorized reduction. If the
+    number of input channels differs from the number of output channels, a 1x1 convolution is applied to remedy this.
+
+    :param cell: The cell.
+    :param in_channels: The number of input channels.
+    :param out_channels: The number of output channels.
+    :param eta: The base learning rate used in SoftHebb convolutions.
+    :param stride: The stride to be used for the operation (default: 1).
+    :param follows_reduction: True if this cell follows a reduction cell (default: False).
+    """
+
+    def __init__(self, cell: Cell, in_channels: int, skip_channels: int, out_channels: int, eta: float, stride=1,
+                 follows_reduction=False):
         super(HebbianCell, self).__init__()
 
+        nodes = list(topological_sort(cell))  # Topological node sorting to ensure an appropriate order of operations.
+        n_nodes = len(nodes)
+
         self.cell = cell
-        self.generations = list(topological_generations(cell))
-        self.nodes = list(topological_sort(cell))  # Ensures appropriate order of operations.
         self.inputs = []  # List of (left, right) tuples recording each node's inputs.
-        self.n_ops = len(self.nodes) - 2
+        self.used = [False] * n_nodes  # List that records whether a nodes' output is used.
+        self.n_ops = n_nodes - 2
+
+        # Preprocess inputs if necessary.
+        self.preprocess_skip = None
+        self.preprocess_x = None
+        if follows_reduction:
+            # Reduce spatial shape of the skip input using a factorized reduction.
+            self.preprocess_skip = FactorizedReduction(skip_channels, out_channels, eta)
+        elif skip_channels != out_channels:
+            # Apply a 1x1 convolution to make the number of channels match.
+            self.preprocess_skip = BNConvTriangle(skip_channels, out_channels, 1, eta)
+        if in_channels != out_channels:
+            # Apply a 1x1 convolution to make the number of channels match.
+            self.preprocess_x = BNConvTriangle(in_channels, out_channels, 1, eta)
+
+        # Mark input tensors as used.
+        self.used[0] = True
+        self.used[1] = True
 
         # Translate pairwise operations.
         self.layers = ModuleList()
-        for node in self.nodes:
+        for node in nodes:
             if node != 0 and node != 1:
                 # Get inputs and corresponding operations.
                 (left, _, op_left), (right, _, op_right) = list(cell.in_edges(node, data=True))
                 self.inputs += [(left, right)]
 
-                # TODO: Does it apply stride to the first inputs or preprocess?
-
-                # Translate and register operations.
+                # Translate and register operations. Only apply stride to original inputs.
                 if left == 0 or left == 1:
-                    # Apply the given stride (i.e., one for a normal cell and two for a reduction cell).
-                    self.layers.append(self.translate(op_left, in_channels, out_channels, stride))
+                    self.layers.append(self.translate(op_left, in_channels, out_channels, eta, stride))
                 else:
-                    self.layers.append(self.translate(op_left, in_channels, out_channels, stride=1))
+                    self.layers.append(self.translate(op_left, in_channels, out_channels, eta, stride=1))
                 if right == 0 or right == 1:
-                    # Apply the given stride (i.e., one for a normal cell and two for a reduction cell).
-                    self.layers.append(self.translate(op_right, in_channels, out_channels, stride))
+                    self.layers.append(self.translate(op_right, in_channels, out_channels, eta, stride))
                 else:
-                    self.layers.append(self.translate(op_right, in_channels, out_channels, stride=1))
+                    self.layers.append(self.translate(op_right, in_channels, out_channels, eta, stride=1))
+
+                # Mark inputs as used.
+                self.used[left] = True
+                self.used[right] = True
+
+        # Store the number of output channels after concatenation of unused intermediate outputs.
+        n_unused = n_nodes - sum(self.used)
+        self.out_channels = n_unused * out_channels
 
     def forward(self, x_skip: Tensor, x: Tensor):
+        """Forward pass.
+
+        :param x_skip: Skip input.
+        :param x: Direct input.
+        :return: Output tensor comprising unused intermediate outputs.
+        """
+
+        # Preprocess inputs if necessary.
+        if self.preprocess_skip is not None:
+            x_skip = self.preprocess_skip(x_skip)
+        if self.preprocess_x is not None:
+            x = self.preprocess_x(x)
 
         # Record intermediate outputs.
         out = [Tensor()] * (self.n_ops + 2)
         out[0] = x_skip
         out[1] = x
 
+        # Loop through, apply, and store pairwise operations.
         for node in range(self.n_ops):
             if node != 0 and node != 1:
                 left, right = self.inputs[node]
@@ -118,18 +242,21 @@ class HebbianCell(Module):
                 # Add result.
                 out[node] = torch.add(x_left, x_right)
 
+        # Concatenate unused tensors along the channel dimension and return.
+        unused = [element for (element, used) in zip(out, self.used) if used]
+        return torch.cat(unused, dim=-3)
+
     @staticmethod
-    def translate(op: str, in_channels: int, out_channels: int, stride: int):
+    def translate(op: str, in_channels: int, out_channels: int, eta: float, stride: int):
         """Translate an operation from string name to the corresponding PyTorch module.
 
         :param op: The operation name.
         :param in_channels: The number of input channels.
         :param out_channels: The number of output channels.
+        :param eta: The base learning rate used in SoftHebb convolutions.
         :param stride: The stride to be used for the operation.
         :return: The corresponding PyTorch module.
         """
-
-        eta = 0.01
 
         if op == 'zero':
             # Set everything to zero (i.e., ignore input).

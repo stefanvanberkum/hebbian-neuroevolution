@@ -24,7 +24,7 @@ from models import Classifier, HebbNet, SoftHebbSmall
 
 
 def train(encoder: Module, classifier: Module, data: Dataset, n_epochs: int, encoder_batch: int, classifier_batch: int,
-          n_workers=0, verbose=False, validation_data=None, val_batch=64):
+          n_workers=0, verbose=False, validation_data=None, val_batch=64, scheduler_interval: tuple[int, int] = None):
     """Train an encoder network and final classifier sequentially.
 
     Both training processes utilize automatic mixed precision in combination with gradient scaling.
@@ -39,6 +39,8 @@ def train(encoder: Module, classifier: Module, data: Dataset, n_epochs: int, enc
     :param verbose: True if progress should be printed (default: False).
     :param validation_data: Validation data used for testing, only used if ``verbose`` is ``True`` (default: None).
     :param val_batch: Batch size for testing on the validation data (default: 64).
+    :param scheduler_interval: Interval ``(t_min, t_max)`` for the learning rate scheduler with ``t_min >= 1`` and
+        both bounds inclusive (optional).
     :return: A trained network comprising the encoder and classifier.
     """
 
@@ -88,7 +90,8 @@ def train_encoder(encoder: Module, data: Dataset, batch_size: int, device: str, 
 
 
 def train_classifier(encoder: Module, classifier: Module, data: Dataset, n_epochs: int, batch_size: int, device: str,
-                     n_workers=0, verbose=True, validation_data=None, val_batch=64):
+                     n_workers=0, verbose=True, validation_data=None, val_batch=64,
+                     scheduler_interval: tuple[int, int] = None):
     """Train the classifier using supervised learning.
 
     :param encoder: The Hebbian encoder network.
@@ -101,16 +104,30 @@ def train_classifier(encoder: Module, classifier: Module, data: Dataset, n_epoch
     :param verbose: True if progress should be printed (default: False).
     :param validation_data: Validation data used for testing, only used if ``verbose`` is ``True`` (default: None).
     :param val_batch: Batch size for testing on the validation data (default: 64).
+    :param scheduler_interval: Interval ``(t_min, t_max)`` for the learning rate scheduler with ``t_min >= 1`` and
+        both bounds inclusive (optional).
     """
 
     # Set up dataloader.
     loader = DataLoader(data, batch_size=batch_size, shuffle=True, num_workers=n_workers, drop_last=True)
 
-    # Set up loss function, optimizer, learning rate scheduler, and gradient scaler.
+    # Set up loss function, optimizer, and gradient scaler.
     loss_fn = CrossEntropyLoss()
     optimizer = Adam(classifier.parameters())
-    scheduler = CosineAnnealingLR(optimizer, T_max=n_epochs)
     scaler = GradScaler()
+
+    # Set up learning rate scheduler.
+    if scheduler_interval is None:
+        scheduler = CosineAnnealingLR(optimizer, T_max=n_epochs)
+    else:
+        t_min, t_max = scheduler_interval
+        if t_max - t_min < n_epochs:
+            raise ValueError("The scheduler interval must be larger than the number of epochs.")
+        scheduler = CosineAnnealingLR(optimizer, T_max=t_max)
+
+        # Step up to t_min.
+        for t in range(t_min - 2):
+            scheduler.step()
 
     # Training loop.
     cumulative_loss = 0
@@ -230,6 +247,6 @@ if __name__ == '__main__':
     trained_model = train(encoder_net, classifier_net, train_data, args.n_epochs, args.hebb_batch, args.sgd_batch,
                           n_workers=args.n_workers, verbose=True, validation_data=test_data)
 
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    test_acc = test(trained_model, test_data, args.sgd_batch, device, args.n_workers)
+    device_str = 'cuda' if torch.cuda.is_available() else 'cpu'
+    test_acc = test(trained_model, test_data, args.sgd_batch, device_str, args.n_workers)
     print(f"Test accuracy: {test_acc:.2f}")
