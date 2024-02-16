@@ -1,6 +1,6 @@
 """This module provides methods for model training.
 
-Allows for command-line use.
+Supports command-line use.
 
 Functions
 =========
@@ -218,12 +218,12 @@ if __name__ == '__main__':
     parser.add_argument('--n_epochs', type=int, help="The number of epochs for SGD training.")
     parser.add_argument('--hebb_batch', type=int, help="The batch size for Hebbian training.")
     parser.add_argument('--sgd_batch', type=int, help="The batch size for SGD training.")
-    parser.add_argument('--fast', default=True, type=bool,
-                        help="True if a fast version of the dataset should be used. Only works for MNIST and CIFAR10 "
-                             "" + "(default: True).")
-    parser.add_argument('--n_workers', default=0, type=int,
-                        help="The batch size for SGD training (default: 0, i.e., run in the main process). Has to be "
-                             "" + "set to zero if a fast-mode dataset is used.")
+    parser.add_argument('--fast', type=bool, default=True,
+                        help="True if a fast version of the dataset should be used. Only works for MNIST and CIFAR10 ("
+                             "default: True).")
+    parser.add_argument('--n_workers', type=int, default=0,
+                        help="The number of workers to use in data loading (default: 0, i.e., run in the main "
+                             "process). Has to be set to zero if a fast-mode dataset is used.")
     args = parser.parse_args()
 
     # Load data.

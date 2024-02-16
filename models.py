@@ -12,7 +12,7 @@ from networkx import topological_sort
 from torch import Tensor
 from torch.nn import AdaptiveAvgPool2d, AvgPool2d, Dropout, Flatten, Linear, MaxPool2d, Module, ModuleList, Sequential
 
-from evolution import Architecture, Cell
+from architecture import Architecture, Cell
 from layers import BNConvTriangle, FactorizedReduction, Identity, Zero
 
 
@@ -188,18 +188,20 @@ class HebbianCell(Module):
         for node in nodes:
             if node != 0 and node != 1:
                 # Get inputs and corresponding operations.
-                (left, _, op_left), (right, _, op_right) = list(cell.in_edges(node, data=True))
+                (left, _, left_attr), (right, _, right_attr) = list(cell.in_edges(node, data=True))
                 self.inputs += [(left, right)]
+                op_left = left_attr['op']
+                op_right = right_attr['op']
 
                 # Translate and register operations. Only apply stride to original inputs.
                 if left == 0 or left == 1:
-                    self.layers.append(self.translate(op_left, in_channels, out_channels, eta, stride))
+                    self.layers.append(self.translate(op_left, out_channels, eta, stride))
                 else:
-                    self.layers.append(self.translate(op_left, in_channels, out_channels, eta, stride=1))
+                    self.layers.append(self.translate(op_left, out_channels, eta, stride=1))
                 if right == 0 or right == 1:
-                    self.layers.append(self.translate(op_right, in_channels, out_channels, eta, stride))
+                    self.layers.append(self.translate(op_right, out_channels, eta, stride))
                 else:
-                    self.layers.append(self.translate(op_right, in_channels, out_channels, eta, stride=1))
+                    self.layers.append(self.translate(op_right, out_channels, eta, stride=1))
 
                 # Mark inputs as used.
                 self.used[left] = True
@@ -229,30 +231,28 @@ class HebbianCell(Module):
         out[1] = x
 
         # Loop through, apply, and store pairwise operations.
-        for node in range(self.n_ops):
-            if node != 0 and node != 1:
-                left, right = self.inputs[node]
+        for op in range(self.n_ops):
+            left, right = self.inputs[op]
 
-                # Apply operation to the left input.
-                x_left = self.layers[2 * node](out[left])
+            # Apply operation to the left input.
+            x_left = self.layers[2 * op](out[left])
 
-                # Apply operation to the right input.
-                x_right = self.layers[2 * node + 1](out[right])
+            # Apply operation to the right input.
+            x_right = self.layers[2 * op + 1](out[right])
 
-                # Add result.
-                out[node] = torch.add(x_left, x_right)
+            # Add result.
+            out[op + 2] = torch.add(x_left, x_right)
 
         # Concatenate unused tensors along the channel dimension and return.
         unused = [element for (element, used) in zip(out, self.used) if used]
         return torch.cat(unused, dim=-3)
 
     @staticmethod
-    def translate(op: str, in_channels: int, out_channels: int, eta: float, stride: int):
+    def translate(op: str, n_channels: int, eta: float, stride: int):
         """Translate an operation from string name to the corresponding PyTorch module.
 
         :param op: The operation name.
-        :param in_channels: The number of input channels.
-        :param out_channels: The number of output channels.
+        :param n_channels: The number of channels.
         :param eta: The base learning rate used in SoftHebb convolutions.
         :param stride: The stride to be used for the operation.
         :return: The corresponding PyTorch module.
@@ -272,18 +272,18 @@ class HebbianCell(Module):
             return MaxPool2d(kernel_size=3, stride=stride, padding=1)
         elif op == 'conv_1':
             # 1x1 Hebbian convolution.
-            return BNConvTriangle(in_channels, out_channels, kernel_size=1, eta=eta, stride=stride)
+            return BNConvTriangle(n_channels, n_channels, kernel_size=1, eta=eta, stride=stride)
         elif op == 'conv_3':
             # 3x3 Hebbian convolution.
-            return BNConvTriangle(in_channels, out_channels, kernel_size=3, eta=eta, stride=stride)
+            return BNConvTriangle(n_channels, n_channels, kernel_size=3, eta=eta, stride=stride)
         elif op == 'conv_13_31':
             # 1x3 and then 3x1 Hebbian convolution.
-            conv_13 = BNConvTriangle(in_channels, out_channels, kernel_size=(1, 3), eta=eta, stride=(1, stride))
-            conv_31 = BNConvTriangle(in_channels, out_channels, kernel_size=(3, 1), eta=eta, stride=(stride, 1))
+            conv_13 = BNConvTriangle(n_channels, n_channels, kernel_size=(1, 3), eta=eta, stride=(1, stride))
+            conv_31 = BNConvTriangle(n_channels, n_channels, kernel_size=(3, 1), eta=eta, stride=(stride, 1))
             return Sequential(conv_13, conv_31)
         elif op == 'dilated_conv_5':
             # 5x5 dilated Hebbian convolution (i.e., 3x3 with dilation=2).
-            return BNConvTriangle(in_channels, out_channels, kernel_size=3, eta=eta, stride=stride, dilation=2)
+            return BNConvTriangle(n_channels, n_channels, kernel_size=3, eta=eta, stride=stride, dilation=2)
         else:
             raise ValueError(f"Operation {op} not found (internal error).")
 

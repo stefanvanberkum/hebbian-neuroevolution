@@ -41,11 +41,11 @@ class FastMNIST(MNIST):
         :param device: Device to put data on.
         """
 
+        self.data.unsqueeze_(dim=1)
+        self.data = self.data.type(dtype=torch.float).to(device)
+        self.targets.to(device)
         if reduce:
             self.data = resize(self.data, size=[8, 8])
-        self.data = tensor(self.data, dtype=torch.float, device=device)
-        self.targets = tensor(self.targets, device=device)
-        self.data = torch.movedim(self.data, -1, 1)
 
     def __getitem__(self, index):
         return self.data[index], self.targets[index]
@@ -75,11 +75,11 @@ class FastCIFAR10(CIFAR10):
         :param device: Device to put data on.
         """
 
-        if reduce:
-            self.data = resize(self.data, size=[8, 8])
         self.data = tensor(self.data, dtype=torch.float, device=device)
         self.targets = tensor(self.targets, device=device)
         self.data = torch.movedim(self.data, -1, 1)
+        if reduce:
+            self.data = resize(self.data, size=[8, 8])
 
     def __getitem__(self, index):
         return self.data[index], self.targets[index]
@@ -106,7 +106,6 @@ def load(dataset: str, validation=False, fast=True, reduce=False):
 
     # Create directory.
     path = f"data/{dataset}"
-    # makedirs(path, exist_ok=True)
 
     # Load dataset.
     if dataset == 'MNIST' and fast:

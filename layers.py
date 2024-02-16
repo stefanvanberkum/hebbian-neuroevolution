@@ -164,12 +164,13 @@ class HebbConv2d(Module):
         # channel 1 at kernel position (1, 1). That is, it gives
         #   x_1111 * y_1111 + x_1112 * y_1112 + ...,
         # which we can see as yx for neuron 1 at the top-left kernel position for the first patch, plus that of the
-        # second patch (moved one to the right in x and to activation y_1112). The second element(1, 1, 1, 2) gives the
+        # second patch (moved one to the right in x and to activation y_1112). The second element (1, 1, 1, 2) gives the
         # average yx for neuron 1 and input channel 1 at kernel position (1, 2). That is, it gives
         #   x_1112 * y_1111 + x_1113 * y_1112 + ...,
         # which we can see as yx for neuron 1 at kernel position (1, 2) for the first patch, plus that of the
         # second patch (moved one to the right in x and to activation y_1112). Transposed, this gives a patch-summed
         # tensor yx for each neuron of shape (C_in, kernel_height, kernel_width).
+        # With dilation, a kernel position (i, j)
         yx = conv2d(x.transpose(0, 1), y.transpose(0, 1), stride=self.stride, dilation=self.dilation).transpose(0, 1)
 
         # The product yu is simpler as y and u both have shape (N, C_out, H, W). We take the element-wise product
