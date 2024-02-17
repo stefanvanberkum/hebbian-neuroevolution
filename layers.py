@@ -60,7 +60,8 @@ class HebbConv2d(Module):
     """Hebbian convolution.
 
     Applies reflective padding to ensure that the input shape equals the output shape. This method is based on the
-    paper and corresponding code by [1]_.
+    paper and corresponding code by [1]_. It assumes an even image size and is only tested for operations in the
+    OpSet defined in architecture.py.
 
     References
     ==========
@@ -69,9 +70,9 @@ class HebbConv2d(Module):
 
     :param in_channels: The number of input channels.
     :param out_channels: The number of output channels.
-    :param kernel_size: The kernel size.
+    :param kernel_size: The kernel size (must be odd).
     :param eta: The base learning rate.
-    :param stride: The stride for convolution (default: 1).
+    :param stride: The stride for convolution, can be one or two in each direction (default: 1).
     :param dilation: The dilation for convolution (default: 1).
     :param temp: The temperature for the softmax operation (default: 1).
     """
@@ -84,20 +85,33 @@ class HebbConv2d(Module):
         self.out_channels = out_channels
         self.kernel_size = kernel_size if isinstance(kernel_size, tuple) else (kernel_size, kernel_size)
         self.eta = eta
-        self.stride = stride
+        self.stride = stride if isinstance(stride, tuple) else (stride, stride)
         self.dilation = dilation
+
+        if self.kernel_size[0] % 2 == 0 or self.kernel_size[1] % 2 == 0:
+            raise ValueError(f"Kernel size must be odd, received {self.kernel_size}.")
+        if self.stride[0] > 2 or self.stride[1] > 2:
+            raise ValueError(f"Stride cannot be larger than two, received {self.stride}")
 
         # Initialize softmax.
         self.softmax = ScaledSoftmax2d(temp)
 
         # Compute padding.
-        if self.kernel_size[0] % 2 == 0 or self.kernel_size[1] % 2 == 0:
-            raise ValueError(f"Kernel size must be odd, received {self.kernel_size}.")
         effective_height = self.kernel_size[0] + (self.kernel_size[0] - 1) * (self.dilation - 1)
         vertical_pad = (effective_height - 1) // 2
         effective_width = self.kernel_size[1] + (self.kernel_size[1] - 1) * (self.dilation - 1)
         horizontal_pad = (effective_width - 1) // 2
-        self.pad = ReflectionPad2d((horizontal_pad, horizontal_pad, vertical_pad, vertical_pad))
+
+        # Take into account that stride of two will end up one cell before the edge of the input.
+        if self.stride[0] == 2:
+            bottom_pad = max(0, vertical_pad - 1)
+        else:
+            bottom_pad = vertical_pad
+        if self.stride[1] == 2:
+            right_pad = max(0, horizontal_pad - 1)
+        else:
+            right_pad = horizontal_pad
+        self.pad = ReflectionPad2d((horizontal_pad, right_pad, vertical_pad, bottom_pad))
 
         # Initialize and register weights.
         self.register_buffer('weight', self._initialize())
@@ -170,8 +184,15 @@ class HebbConv2d(Module):
         # which we can see as yx for neuron 1 at kernel position (1, 2) for the first patch, plus that of the
         # second patch (moved one to the right in x and to activation y_1112). Transposed, this gives a patch-summed
         # tensor yx for each neuron of shape (C_in, kernel_height, kernel_width).
-        # With dilation, a kernel position (i, j)
-        yx = conv2d(x.transpose(0, 1), y.transpose(0, 1), stride=self.stride, dilation=self.dilation).transpose(0, 1)
+        #   With dilation, each y-element is generated using dilated x-elements, so y should be applied to x with a
+        # stride. With a stride s, each kernel position only sees every s'th x-element, so y should be applied to x
+        # with a dilation.
+        if self.kernel_size[0] == 1 and self.kernel_size[1] == 1 and self.stride[0] == 2 and self.stride[1] == 2:
+            # 1x1 kernel with stride 2 requires a different approach: Instead of dilation we need to reduce x.
+            yx = conv2d(x[:, :, ::2, ::2].transpose(0, 1), y.transpose(0, 1)).transpose(0, 1)
+        else:
+            yx = conv2d(x.transpose(0, 1), y.transpose(0, 1), stride=self.dilation, dilation=self.stride).transpose(0,
+                                                                                                                    1)
 
         # The product yu is simpler as y and u both have shape (N, C_out, H, W). We take the element-wise product
         # which gives the activation times pre-activation for each neuron at each patch position. Then, the result is
@@ -229,13 +250,13 @@ class Zero(Module):
         :return: A zero tensor.
         """
 
-        out_shape = x.shape
+        out_shape = list(x.shape)
 
         # Divide height and width by the stride.
         out_shape[2] //= self.stride
         out_shape[3] //= self.stride
 
-        return torch.zeros(out_shape)
+        return torch.zeros(out_shape, dtype=x.dtype, device=x.device)
 
 
 class Identity(Module):
@@ -281,8 +302,8 @@ class FactorizedReduction(Module):
             raise ValueError(
                 f"The number of filters needs to be even for factorized reduction, received " + f"{out_channels}.")
 
-        self.conv_1 = BNConvTriangle(in_channels, out_channels // 2, 1, eta)
-        self.conv_2 = BNConvTriangle(in_channels, out_channels // 2, 1, eta)
+        self.conv_1 = BNConvTriangle(in_channels, out_channels // 2, 1, eta, stride=2)
+        self.conv_2 = BNConvTriangle(in_channels, out_channels // 2, 1, eta, stride=2)
 
     def forward(self, x: Tensor):
         """Forward pass.

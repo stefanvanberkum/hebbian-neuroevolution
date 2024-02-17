@@ -24,7 +24,7 @@ from models import Classifier, HebbNet, SoftHebbSmall
 
 
 def train(encoder: Module, classifier: Module, data: Dataset, n_epochs: int, encoder_batch: int, classifier_batch: int,
-          n_workers=0, verbose=False, validation_data=None, val_batch=64, scheduler_interval: tuple[int, int] = None):
+          n_workers=0, verbose=False, validation_data=None, val_batch=64, checkpoint: dict | None = None):
     """Train an encoder network and final classifier sequentially.
 
     Both training processes utilize automatic mixed precision in combination with gradient scaling.
@@ -39,8 +39,8 @@ def train(encoder: Module, classifier: Module, data: Dataset, n_epochs: int, enc
     :param verbose: True if progress should be printed (default: False).
     :param validation_data: Validation data used for testing, only used if ``verbose`` is ``True`` (default: None).
     :param val_batch: Batch size for testing on the validation data (default: 64).
-    :param scheduler_interval: Interval ``(t_min, t_max)`` for the learning rate scheduler with ``t_min >= 1`` and
-        both bounds inclusive (optional).
+    :param checkpoint: Optional dict with {start_epoch, max_epochs, optimizer_state_dict, scheduler_state_dict,
+        save_path}.
     :return: A trained network comprising the encoder and classifier.
     """
 
@@ -48,17 +48,20 @@ def train(encoder: Module, classifier: Module, data: Dataset, n_epochs: int, enc
     encoder.to(device)
     classifier.to(device)
 
-    # Train encoder and classifier.
-    start_time = None
+    # Train encoder if starting from scratch.
+    start_time = time()
+    if checkpoint is None or checkpoint['start_epoch'] == 0:
+        if verbose:
+            print("Training encoder...")
+        train_encoder(encoder, data, encoder_batch, device, n_workers)
+        if verbose:
+            print(f"Done! Elapsed time: {str(timedelta(seconds=time() - start_time)).split('.', 2)[0]}")
+
+    # Train classifier.
     if verbose:
-        print("Training encoder...")
-        start_time = time()
-    train_encoder(encoder, data, encoder_batch, device, n_workers)
-    if verbose:
-        print(f"Done! Elapsed time: {str(timedelta(seconds=time() - start_time)).split('.', 2)[0]}")
         print("Training classifier...")
     train_classifier(encoder, classifier, data, n_epochs, classifier_batch, device, n_workers, verbose, validation_data,
-                     val_batch)
+                     val_batch, checkpoint)
     if verbose:
         print(f"Done! Elapsed time: {str(timedelta(seconds=time() - start_time)).split('.', 2)[0]}")
 
@@ -90,8 +93,7 @@ def train_encoder(encoder: Module, data: Dataset, batch_size: int, device: str, 
 
 
 def train_classifier(encoder: Module, classifier: Module, data: Dataset, n_epochs: int, batch_size: int, device: str,
-                     n_workers=0, verbose=True, validation_data=None, val_batch=64,
-                     scheduler_interval: tuple[int, int] = None):
+                     n_workers=0, verbose=True, validation_data=None, val_batch=64, checkpoint: dict | None = None):
     """Train the classifier using supervised learning.
 
     :param encoder: The Hebbian encoder network.
@@ -104,30 +106,34 @@ def train_classifier(encoder: Module, classifier: Module, data: Dataset, n_epoch
     :param verbose: True if progress should be printed (default: False).
     :param validation_data: Validation data used for testing, only used if ``verbose`` is ``True`` (default: None).
     :param val_batch: Batch size for testing on the validation data (default: 64).
-    :param scheduler_interval: Interval ``(t_min, t_max)`` for the learning rate scheduler with ``t_min >= 1`` and
-        both bounds inclusive (optional).
+    :param checkpoint: Optional dict with {start_epoch, max_epochs, optimizer_state_dict, scheduler_state_dict,
+        save_path}.
     """
 
     # Set up dataloader.
     loader = DataLoader(data, batch_size=batch_size, shuffle=True, num_workers=n_workers, drop_last=True)
 
-    # Set up loss function, optimizer, and gradient scaler.
+    # Set up loss function and gradient scaler.
     loss_fn = CrossEntropyLoss()
-    optimizer = Adam(classifier.parameters())
     scaler = GradScaler()
 
     # Set up learning rate scheduler.
-    if scheduler_interval is None:
+    if checkpoint is None:
+        optimizer = Adam(classifier.parameters())
         scheduler = CosineAnnealingLR(optimizer, T_max=n_epochs)
     else:
-        t_min, t_max = scheduler_interval
-        if t_max - t_min < n_epochs:
-            raise ValueError("The scheduler interval must be larger than the number of epochs.")
-        scheduler = CosineAnnealingLR(optimizer, T_max=t_max)
+        if n_epochs > checkpoint['max_epochs'] - checkpoint['start_epoch']:
+            raise ValueError("The number of epochs is larger than the remaining number of epochs specified by the "
+                             "checkpoint.")
 
-        # Step up to t_min.
-        for t in range(t_min - 2):
-            scheduler.step()
+        optimizer = Adam(classifier.parameters())
+        if checkpoint['start_epoch'] > 0:
+            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+
+        scheduler = CosineAnnealingLR(optimizer, T_max=checkpoint['max_epochs'],
+                                      last_epoch=checkpoint['start_epoch'] - 1)
+        if checkpoint['start_epoch'] > 0:
+            scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
 
     # Training loop.
     cumulative_loss = 0
@@ -179,6 +185,14 @@ def train_classifier(encoder: Module, classifier: Module, data: Dataset, n_epoch
             n_correct = 0
             batches = 0
             samples = 0
+
+    # Save checkpoint if necessary.
+    if checkpoint is not None:
+        start_epoch = checkpoint['start_epoch'] + n_epochs
+        checkpoint = {'start_epoch': start_epoch, 'max_epochs': checkpoint['max_epochs'],
+                      'optimizer_state_dict': optimizer.state_dict(), 'scheduler_state_dict': scheduler.state_dict(),
+                      'save_path': checkpoint['save_path']}
+        torch.save(checkpoint, checkpoint['save_path'])
 
 
 def test(model: Module, data: Dataset, batch_size: int, device: str, n_workers=0):

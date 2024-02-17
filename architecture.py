@@ -11,9 +11,10 @@ import pickle
 from copy import deepcopy
 from enum import StrEnum, auto, unique
 from os import makedirs
-from os.path import join
+from os.path import exists, join
+from shutil import rmtree
 
-from networkx import DiGraph, get_edge_attributes, set_edge_attributes, topological_generations
+from networkx import MultiDiGraph, get_edge_attributes, set_edge_attributes, topological_generations
 from networkx.drawing.nx_agraph import to_agraph
 from numpy.random import Generator
 
@@ -91,12 +92,14 @@ class Architecture:
         """
 
         stem = join(path, str(self.identifier))
+        if exists(stem):
+            rmtree(stem)
         makedirs(stem)
         location = join(stem, "architecture.pkl")
         pickle.dump(self, open(location, 'wb'))
 
 
-class Cell(DiGraph):
+class Cell(MultiDiGraph):
     """A network cell defined by pairwise operations.
 
     Calling the constructor generates a random cell.
@@ -148,8 +151,9 @@ class Cell(DiGraph):
             for _, generation in enumerate(topological_generations(self)):
                 candidates += generation
 
-                # Stop when we reach the node's generation.
+                # Stop when we reach the node's generation and remove the node itself from the candidates.
                 if node in generation:
+                    candidates.remove(node)
                     break
 
             # Pick a random node from the candidates and add new edge.

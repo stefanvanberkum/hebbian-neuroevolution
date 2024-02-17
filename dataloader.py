@@ -45,7 +45,7 @@ class FastMNIST(MNIST):
         self.data = self.data.type(dtype=torch.float).to(device)
         self.targets.to(device)
         if reduce:
-            self.data = resize(self.data, size=[8, 8])
+            self.data = resize(self.data, size=[16, 16])
 
     def __getitem__(self, index):
         return self.data[index], self.targets[index]
@@ -79,7 +79,7 @@ class FastCIFAR10(CIFAR10):
         self.targets = tensor(self.targets, device=device)
         self.data = torch.movedim(self.data, -1, 1)
         if reduce:
-            self.data = resize(self.data, size=[8, 8])
+            self.data = resize(self.data, size=[16, 16])
 
     def __getitem__(self, index):
         return self.data[index], self.targets[index]

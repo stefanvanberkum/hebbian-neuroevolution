@@ -114,6 +114,7 @@ class HebbianEncoder(Module):
             self.cells.append(cell)
             skip_channels = in_channels  # The next skip input is the current input.
             in_channels = cell.out_channels  # The next direct input is the current output.
+        self.out_channels = in_channels  # Record the final number of output channels.
 
         # Global average pooling.
         self.pool = AdaptiveAvgPool2d(output_size=1)
@@ -129,7 +130,7 @@ class HebbianEncoder(Module):
         # Run input through the cells.
         x_skip = x
         for cell in self.cells:
-            x_next = cell(x, x_skip)
+            x_next = cell(x_skip, x)
             x_skip = x
             x = x_next
 
@@ -211,6 +212,7 @@ class HebbianCell(Module):
         n_unused = n_nodes - sum(self.used)
         self.out_channels = n_unused * out_channels
 
+    @torch.no_grad()
     def forward(self, x_skip: Tensor, x: Tensor):
         """Forward pass.
 
@@ -244,7 +246,7 @@ class HebbianCell(Module):
             out[op + 2] = torch.add(x_left, x_right)
 
         # Concatenate unused tensors along the channel dimension and return.
-        unused = [element for (element, used) in zip(out, self.used) if used]
+        unused = [element for (element, used) in zip(out, self.used) if not used]
         return torch.cat(unused, dim=-3)
 
     @staticmethod
