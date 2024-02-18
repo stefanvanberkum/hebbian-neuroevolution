@@ -159,7 +159,7 @@ def evolve(dataset='CIFAR10', n_channels=8, stack_size=2, n_epochs=10, generatio
         print("Generating initial population...")
         for i in tqdm(range(50), desc="Architecture", file=sys.stdout):
             # Generate architecture and add to subpopulation one.
-            architecture = Architecture(identifier=step, rng=rng)
+            architecture = Architecture(identifier=step)
             architecture.save(arch_path)
             train_and_evaluate(architecture, step)
             P_1.add(step)
@@ -173,10 +173,8 @@ def evolve(dataset='CIFAR10', n_channels=8, stack_size=2, n_epochs=10, generatio
     # Run evolution for the specified number of generations.
     print("Running evolution...")
     progress_bar = tqdm(range(start, generations), desc="Generation", file=sys.stdout)
+    progress_bar.set_description(f"Best accuracy: {max(accuracies)}%")
     for generation in progress_bar:
-        # Update progress bar.
-        progress_bar.set_description(f"Best accuracy: {max(accuracies)}%")
-
         # Sample offspring from the subpopulations if available (five from each).
         for subpopulation in [P_1, P_2, P_3]:
             if len(subpopulation) > 0:
@@ -238,6 +236,9 @@ def evolve(dataset='CIFAR10', n_channels=8, stack_size=2, n_epochs=10, generatio
         ckpt = (rng, P_1, P_2, P_3, P_3_history, accuracies, max_accuracies, generation, step, oldest)
         pickle.dump(ckpt, open(ckpt_path, 'wb'))
 
+        # Update progress bar.
+        progress_bar.set_description(f"Best accuracy: {max(accuracies)}%")
+
         if verbose:
             print("[INFO] End of generation.", file=sys.stderr)
             print(f"[INFO] P_1: {P_1}.", file=sys.stderr)
@@ -286,7 +287,7 @@ def evolve(dataset='CIFAR10', n_channels=8, stack_size=2, n_epochs=10, generatio
         architecture.normal_cell.visualize(join(path, "winners", str(winner), "normal.png"))
         architecture.reduction_cell.visualize(join(path, "winners", str(winner), "reduction.png"))
 
-        with open(join(path, "final_accuracies.csv"), 'w') as out:
+        with open(join(path, "final_accuracies.csv"), 'a') as out:
             out.write(f"{winner},{accuracy}")
 
         if accuracy > best_acc:
@@ -317,7 +318,6 @@ if __name__ == '__main__':
     parser.add_argument('--verbose', action=BooleanOptionalAction, help="Turn on this option for verbose info.")
     parser.add_argument('--checkpoint', type=str, default=None, help="Optional checkpoint name to continue evolution.")
     args = parser.parse_args()
-    # :param reduce: True if the spatial size of the input images should be reduced to 16x16 (default: False).
 
     evolve(args.dataset, args.n_channels, args.stack_size, args.n_epochs, args.generations, args.eta,
            args.encoder_batch, args.classifier_batch, args.reduce, args.verbose, args.checkpoint)

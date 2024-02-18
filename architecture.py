@@ -16,7 +16,7 @@ from shutil import rmtree
 
 from networkx import MultiDiGraph, get_edge_attributes, set_edge_attributes, topological_generations
 from networkx.drawing.nx_agraph import to_agraph
-from numpy.random import Generator
+from numpy.random import default_rng
 
 
 @unique
@@ -39,26 +39,23 @@ class Architecture:
     Calling the constructor generates a random architecture.
 
     :ivar identifier: The architecture's identifier.
-    :ivar rng: The random number generator.
     :ivar normal_cell: The architecture's normal cell.
     :ivar reduction cell: The architecture's reduction cell.
     :ivar parent: The architecture's parent (identifier).
     """
 
-    def __init__(self, identifier: int, rng: Generator, n_ops=4):
+    def __init__(self, identifier: int, n_ops=4):
         """Generate a random architecture.
 
         :param identifier: The architecture's identifier.
-        :param rng: The random number generator.
         :param n_ops: The number of pairwise operations in each cell.
         """
 
         self.identifier = identifier
-        self.rng = rng
 
         # Randomly initialize cells.
-        self.normal_cell = Cell(rng, n_ops=n_ops)
-        self.reduction_cell = Cell(rng, n_ops=n_ops)
+        self.normal_cell = Cell(n_ops=n_ops)
+        self.reduction_cell = Cell(n_ops=n_ops)
 
         self.parent = None
 
@@ -71,11 +68,13 @@ class Architecture:
         :return: The child architecture.
         """
 
+        rng = default_rng()
+
         child = deepcopy(self)
         child.identifier = identifier
         child.parent = self.identifier
 
-        if self.rng.random() < 0.5:
+        if rng.random() < 0.5:
             # Mutate normal cell.
             child.normal_cell.mutate()
         else:
@@ -105,16 +104,15 @@ class Cell(MultiDiGraph):
     Calling the constructor generates a random cell.
     """
 
-    def __init__(self, rng: Generator, n_ops: int):
+    def __init__(self, n_ops: int):
         """Generate a random cell.
 
-        :param rng: A random generator.
         :param n_ops: The number of pairwise operations.
         """
 
         super(Cell, self).__init__()
 
-        self.rng = rng
+        rng = default_rng()
         self.n_ops = n_ops
 
         # Add nodes. Node zero and one refer to the skip and direct input, respectively.
@@ -123,10 +121,10 @@ class Cell(MultiDiGraph):
         # Build random cell by sequentially sampling nodes (pairwise operations).
         for node in range(2, self.n_ops + 2):
             # Pick two previously added nodes at random as inputs.
-            inputs = self.rng.choice(node, size=2, replace=False)
+            inputs = rng.choice(node, size=2)
 
             # Pick a random operation to apply to each input and add as edges.
-            ops = self.rng.choice(list(OpSet), size=2)
+            ops = rng.choice(list(OpSet), size=2)
             self.add_edge(inputs[0], node, op=ops[0])
             self.add_edge(inputs[1], node, op=ops[1])
 
@@ -137,12 +135,14 @@ class Cell(MultiDiGraph):
         operation without forming a loop) or an operation (i.e., change operation to one in the operation set).
         """
 
-        if self.rng.random() < 0.5:
-            # Mutate hidden state: Randomly sample a node (pairwise operation).
-            node = self.rng.integers(2, self.n_ops + 2)
+        rng = default_rng()
 
-            # Randomly sample an input edge (u, v, attr) and remove it.
-            old_input, _, attr = list(self.in_edges(node, data=True))[self.rng.integers(2)]
+        if rng.random() < 0.5:
+            # Mutate hidden state: Randomly sample a node (pairwise operation).
+            node = rng.integers(2, self.n_ops + 2)
+
+            # Randomly sample an input edge (old_input, node, attr) and remove it.
+            old_input, _, attr = list(self.in_edges(node, data=True))[rng.integers(2)]
             op = attr['op']
             self.remove_edge(old_input, node)
 
@@ -151,20 +151,27 @@ class Cell(MultiDiGraph):
             for _, generation in enumerate(topological_generations(self)):
                 candidates += generation
 
+                # Remove the old input from the candidates to avoid an exact copy.
+                if old_input in generation:
+                    candidates.remove(old_input)
+
                 # Stop when we reach the node's generation and remove the node itself from the candidates.
                 if node in generation:
                     candidates.remove(node)
                     break
 
             # Pick a random node from the candidates and add new edge.
-            new_input = self.rng.choice(candidates)
+            new_input = rng.choice(candidates)
             self.add_edge(new_input, node, op=op)
         else:
             # Mutate operation: Randomly sample an edge (operation).
-            edge = self.rng.choice(list(self.edges))
+            edge = rng.choice(list(self.edges))
 
             # Pick a random operation from the operation set.
-            self.edges[edge]['op'] = self.rng.choice(list(OpSet))
+            old_op = self.edges[edge]['op']
+            candidates = list(OpSet)
+            candidates.remove(old_op)
+            self.edges[edge]['op'] = rng.choice(candidates)
 
     def visualize(self, path: str):
         """Visualize the cell.

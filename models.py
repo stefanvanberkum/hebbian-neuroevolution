@@ -159,8 +159,8 @@ class HebbianCell(Module):
                  follows_reduction=False):
         super(HebbianCell, self).__init__()
 
-        nodes = list(topological_sort(cell))  # Topological node sorting to ensure an appropriate order of operations.
-        n_nodes = len(nodes)
+        self.nodes = list(topological_sort(cell))  # Topological sorting to ensure an appropriate order of operations.
+        n_nodes = len(self.nodes)
 
         self.cell = cell
         self.inputs = []  # List of (left, right) tuples recording each node's inputs.
@@ -185,8 +185,8 @@ class HebbianCell(Module):
         self.used[1] = True
 
         # Translate pairwise operations.
-        self.layers = ModuleList()
-        for node in nodes:
+        self.layers = ModuleList()  # In order of operations.
+        for node in self.nodes:
             if node != 0 and node != 1:
                 # Get inputs and corresponding operations.
                 (left, _, left_attr), (right, _, right_attr) = list(cell.in_edges(node, data=True))
@@ -234,6 +234,8 @@ class HebbianCell(Module):
 
         # Loop through, apply, and store pairwise operations.
         for op in range(self.n_ops):
+            node = self.nodes[op + 2]
+
             left, right = self.inputs[op]
 
             # Apply operation to the left input.
@@ -243,7 +245,7 @@ class HebbianCell(Module):
             x_right = self.layers[2 * op + 1](out[right])
 
             # Add result.
-            out[op + 2] = torch.add(x_left, x_right)
+            out[node] = torch.add(x_left, x_right)
 
         # Concatenate unused tensors along the channel dimension and return.
         unused = [element for (element, used) in zip(out, self.used) if not used]
