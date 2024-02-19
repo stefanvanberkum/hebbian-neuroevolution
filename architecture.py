@@ -39,22 +39,26 @@ class Architecture:
     Calling the constructor generates a random architecture.
 
     :ivar identifier: The architecture's identifier.
-    :ivar normal_cell: The architecture's normal cell.
+    :ivar normal: True if the architecture includes a normal cell.
+    :ivar normal_cell: The architecture's normal cell (if ``normal`` is True).
     :ivar reduction cell: The architecture's reduction cell.
     :ivar parent: The architecture's parent (identifier).
     """
 
-    def __init__(self, identifier: int, n_ops=4):
+    def __init__(self, identifier: int, n_ops=4, normal=True):
         """Generate a random architecture.
 
         :param identifier: The architecture's identifier.
         :param n_ops: The number of pairwise operations in each cell.
+        :param normal: True if the architecture should include a normal cell.
         """
 
         self.identifier = identifier
+        self.normal = normal
 
         # Randomly initialize cells.
-        self.normal_cell = Cell(n_ops=n_ops)
+        if self.normal:
+            self.normal_cell = Cell(n_ops=n_ops)
         self.reduction_cell = Cell(n_ops=n_ops)
 
         self.parent = None
@@ -74,9 +78,14 @@ class Architecture:
         child.identifier = identifier
         child.parent = self.identifier
 
-        if rng.random() < 0.5:
-            # Mutate normal cell.
-            child.normal_cell.mutate()
+        if self.normal:
+            # Randomly choose which cell to mutate.
+            if rng.random() < 0.5:
+                # Mutate normal cell.
+                child.normal_cell.mutate()
+            else:
+                # Mutate reduction cell.
+                child.reduction_cell.mutate()
         else:
             # Mutate reduction cell.
             child.reduction_cell.mutate()

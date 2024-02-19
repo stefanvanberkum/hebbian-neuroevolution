@@ -13,7 +13,7 @@ from torch import Tensor
 from torch.nn import AdaptiveAvgPool2d, AvgPool2d, Dropout, Flatten, Linear, MaxPool2d, Module, ModuleList, Sequential
 
 from architecture import Architecture, Cell
-from layers import BNConvTriangle, FactorizedReduction, Identity, Zero
+from layers import BNConvTriangle, Identity, Zero
 
 
 class HebbNet(Module):
@@ -55,69 +55,94 @@ class HebbianEncoder(Module):
     """Modular Hebbian encoder network.
 
     This network is constructed using evolved cells. It has two reduction cells with a stack of normal cells on
-    either side (i.e., N-R-N-R-N).
+    either side (i.e., N-R-N-R-N) followed up by global average pooling if the architecture contains a normal cell.
+    If not, it comprises a sequence of ``n_reduction`` reduction cells followed by 2x2 average pooling.
 
     :param in_channels: The number of input channels.
     :param architecture: An evolved architecture.
     :param n_channels: The initial number of channels (doubled after each reduction layer).
     :param stack_size: The number of normal cells between reduction cells.
     :param eta: The base learning rate used in SoftHebb convolutions.
+    :param scaling_factor: The scaling factor for the number of filters (default: 2).
+    :param n_reduction: Number of reduction layers if no normal cell is included (default: 3).
     """
 
-    def __init__(self, in_channels: int, architecture: Architecture, n_channels: int, stack_size: int, eta: float):
+    def __init__(self, in_channels: int, architecture: Architecture, n_channels: int, stack_size: int, eta: float,
+                 scaling_factor=2, n_reduction=3):
         super(HebbianEncoder, self).__init__()
 
-        normal_cell = architecture.normal_cell
         reduction_cell = architecture.reduction_cell
 
         self.cells = ModuleList()
 
-        # First stack of normal cells.
-        skip_channels = in_channels
-        out_channels = n_channels
-        for n in range(stack_size):
-            cell = HebbianCell(normal_cell, in_channels, skip_channels, out_channels, eta)
-            self.cells.append(cell)
-            skip_channels = in_channels  # The next skip input is the current input.
-            in_channels = cell.out_channels  # The next direct input is the current output.
+        if architecture.normal:
+            normal_cell = architecture.normal_cell
 
-        # First reduction cell.
-        cell = HebbianCell(reduction_cell, in_channels, skip_channels, out_channels, eta, stride=2)
-        self.cells.append(cell)
-        skip_channels = in_channels  # The next skip input is the current input.
-        in_channels = cell.out_channels  # The next direct input is the current output.
-        out_channels *= 2  # Double the number of filters.
-
-        # Second stack of normal cells.
-        for n in range(stack_size):
-            if n == 0:
-                cell = HebbianCell(normal_cell, in_channels, skip_channels, out_channels, eta, follows_reduction=True)
-            else:
+            # First stack of normal cells.
+            skip_channels = in_channels
+            out_channels = n_channels
+            for n in range(stack_size):
                 cell = HebbianCell(normal_cell, in_channels, skip_channels, out_channels, eta)
+                self.cells.append(cell)
+                skip_channels = in_channels  # The next skip input is the current input.
+                in_channels = cell.out_channels  # The next direct input is the current output.
+
+            # First reduction cell.
+            cell = HebbianCell(reduction_cell, in_channels, skip_channels, out_channels, eta, stride=2)
             self.cells.append(cell)
             skip_channels = in_channels  # The next skip input is the current input.
             in_channels = cell.out_channels  # The next direct input is the current output.
+            out_channels *= scaling_factor  # Scale the number of filters.
 
-        # Second reduction cell.
-        cell = HebbianCell(reduction_cell, in_channels, skip_channels, out_channels, eta, stride=2)
-        self.cells.append(cell)
-        skip_channels = in_channels  # The next skip input is the current input.
-        in_channels = cell.out_channels  # The next direct input is the current output.
-        out_channels *= 2  # Double the number of filters.
+            # Second stack of normal cells.
+            for n in range(stack_size):
+                if n == 0:
+                    cell = HebbianCell(normal_cell, in_channels, skip_channels, out_channels, eta,
+                                       follows_reduction=True)
+                else:
+                    cell = HebbianCell(normal_cell, in_channels, skip_channels, out_channels, eta)
+                self.cells.append(cell)
+                skip_channels = in_channels  # The next skip input is the current input.
+                in_channels = cell.out_channels  # The next direct input is the current output.
 
-        # Third stack of normal cells.
-        for n in range(stack_size):
-            if n == 0:
-                cell = HebbianCell(normal_cell, in_channels, skip_channels, out_channels, eta, follows_reduction=True)
-            else:
-                cell = HebbianCell(normal_cell, in_channels, skip_channels, out_channels, eta)
+            # Second reduction cell.
+            cell = HebbianCell(reduction_cell, in_channels, skip_channels, out_channels, eta, stride=2)
             self.cells.append(cell)
             skip_channels = in_channels  # The next skip input is the current input.
             in_channels = cell.out_channels  # The next direct input is the current output.
-        self.out_channels = in_channels  # Record the final number of output channels.
+            out_channels *= scaling_factor  # Scale the number of filters.
 
-        # Global average pooling.
-        self.pool = AdaptiveAvgPool2d(output_size=1)
+            # Third stack of normal cells.
+            for n in range(stack_size):
+                if n == 0:
+                    cell = HebbianCell(normal_cell, in_channels, skip_channels, out_channels, eta,
+                                       follows_reduction=True)
+                else:
+                    cell = HebbianCell(normal_cell, in_channels, skip_channels, out_channels, eta)
+                self.cells.append(cell)
+                skip_channels = in_channels  # The next skip input is the current input.
+                in_channels = cell.out_channels  # The next direct input is the current output.
+            self.out_channels = in_channels  # Record the final number of output channels.
+
+            # Global average pooling.
+            self.pool = AdaptiveAvgPool2d(output_size=1)
+        else:
+            skip_channels = in_channels
+            out_channels = n_channels
+            for n in range(n_reduction):
+                if n == 0:
+                    # First reduction.
+                    cell = HebbianCell(reduction_cell, in_channels, skip_channels, out_channels, eta, stride=2)
+                else:
+                    cell = HebbianCell(reduction_cell, in_channels, skip_channels, out_channels, eta, stride=2,
+                                       follows_reduction=True)
+                self.cells.append(cell)
+                skip_channels = in_channels  # The next skip input is the current input.
+                in_channels = cell.out_channels  # The next direct input is the current output.
+                out_channels *= scaling_factor  # Scale the number of filters.
+            self.out_channels = in_channels  # Record the final number of output channels.
+
+            self.pool = None
 
     @torch.no_grad()
     def forward(self, x: Tensor):
@@ -134,8 +159,9 @@ class HebbianEncoder(Module):
             x_skip = x
             x = x_next
 
-        # Apply global average pooling.
-        x = self.pool(x)
+        if self.pool is not None:
+            # Apply pooling.
+            x = self.pool(x)
 
         return x
 
@@ -172,13 +198,14 @@ class HebbianCell(Module):
         self.preprocess_x = None
         if follows_reduction:
             # Reduce spatial shape of the skip input using a factorized reduction.
-            self.preprocess_skip = FactorizedReduction(skip_channels, out_channels, eta)
+            # self.preprocess_skip = FactorizedReduction(skip_channels, out_channels, eta)
+            self.preprocess_skip = BNConvTriangle(skip_channels, out_channels, 3, eta, stride=2)
         elif skip_channels != out_channels:
             # Apply a 1x1 convolution to make the number of channels match.
-            self.preprocess_skip = BNConvTriangle(skip_channels, out_channels, 1, eta)
+            self.preprocess_skip = BNConvTriangle(skip_channels, out_channels, 3, eta)
         if in_channels != out_channels:
             # Apply a 1x1 convolution to make the number of channels match.
-            self.preprocess_x = BNConvTriangle(in_channels, out_channels, 1, eta)
+            self.preprocess_x = BNConvTriangle(in_channels, out_channels, 3, eta)
 
         # Mark input tensors as used.
         self.used[0] = True

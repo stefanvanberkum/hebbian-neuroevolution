@@ -24,13 +24,20 @@ from models import Classifier, HebbianEncoder
 from training import test, train
 
 
-def evolve(dataset='CIFAR10', n_channels=8, stack_size=2, n_epochs=10, generations=100, eta=0.01, encoder_batch=32,
-           classifier_batch=256, reduce=False, verbose=False, checkpoint=None):
+def evolve(dataset='CIFAR10', n_channels=8, scaling_factor=2, n_ops=3, stack_size=2, n_reduction=3, n_epochs=10,
+           generations=100, eta=0.01, encoder_batch=32, classifier_batch=256, reduce=False, verbose=False,
+           checkpoint=None):
     """Evolve a Hebbian encoder.
+
+    If the stack size is set to zero, a sequence of ``n_reduction`` reduction cells is used. Otherwise, alternating
+    stacks of normal cells and single reduction cells are used in the order N-R-N-R-N.
 
     :param dataset: The dataset to use for evolution (default: CIFAR10). One of: {MNIST, CIFAR10}.
     :param n_channels: The initial number of channels (default: 8).
+    :param scaling_factor: The scaling factor for the number of filters after each reduction cell (default: 2).
+    :param n_ops: The number of operations in each cell (default: 3).
     :param stack_size: The normal cell stack size (default: 2).
+    :param n_reduction: The number of reduction cells, used if ``stack_size`` is set to zero (default: 3).
     :param n_epochs: The epoch increment for training the classifier (default: 10).
     :param generations: The number of generations (default 100).
     :param eta: The base learning rate used in SoftHebb convolutions (default: 0.01).
@@ -93,8 +100,11 @@ def evolve(dataset='CIFAR10', n_channels=8, stack_size=2, n_epochs=10, generatio
         """
 
         # Train and compute validation accuracy.
-        encoder = HebbianEncoder(in_channels, arch, n_channels, stack_size, eta)
-        classifier = Classifier(encoder.out_channels, n_classes)
+        encoder = HebbianEncoder(in_channels, arch, n_channels, stack_size, eta, scaling_factor, n_reduction)
+        if stack_size == 0:
+            classifier = Classifier(encoder.out_channels * (32 // 2 ** n_reduction) ** 2, n_classes)
+        else:
+            classifier = Classifier(encoder.out_channels, n_classes)
 
         # Check if a checkpoint exists.
         encoder_path = join(arch_path, str(identifier), "encoder.pt")
@@ -159,7 +169,11 @@ def evolve(dataset='CIFAR10', n_channels=8, stack_size=2, n_epochs=10, generatio
         print("Generating initial population...")
         for i in tqdm(range(50), desc="Architecture", file=sys.stdout):
             # Generate architecture and add to subpopulation one.
-            architecture = Architecture(identifier=step)
+            if stack_size == 0:
+                # No normal cell.
+                architecture = Architecture(identifier=step, n_ops=n_ops, normal=False)
+            else:
+                architecture = Architecture(identifier=step, n_ops=n_ops)
             architecture.save(arch_path)
             train_and_evaluate(architecture, step)
             P_1.add(step)
@@ -277,14 +291,18 @@ def evolve(dataset='CIFAR10', n_channels=8, stack_size=2, n_epochs=10, generatio
         architecture = pickle.load(open(join(arch_path, str(winner), "architecture.pkl"), 'rb'))
 
         # Train and record validation accuracy.
-        enc = HebbianEncoder(in_channels, architecture, n_channels, stack_size, eta)
-        fc = Classifier(enc.out_channels, n_classes)
+        enc = HebbianEncoder(in_channels, architecture, n_channels, stack_size, eta, scaling_factor, n_reduction)
+        if stack_size == 0:
+            fc = Classifier(enc.out_channels * (32 // 2 ** n_reduction) ** 2, n_classes)
+        else:
+            fc = Classifier(enc.out_channels, n_classes)
         m = train(enc, fc, training, 50, 16, classifier_batch)
         accuracy = test(m, validation, classifier_batch, device)
 
         # Save cell visualizations.
         makedirs(join(path, "winners", str(winner)), exist_ok=True)
-        architecture.normal_cell.visualize(join(path, "winners", str(winner), "normal.png"))
+        if architecture.normal:
+            architecture.normal_cell.visualize(join(path, "winners", str(winner), "normal.png"))
         architecture.reduction_cell.visualize(join(path, "winners", str(winner), "reduction.png"))
 
         with open(join(path, "final_accuracies.csv"), 'a') as out:
@@ -303,12 +321,17 @@ if __name__ == '__main__':
     parser.add_argument('--dataset', type=str, default='CIFAR10', choices=['MNIST', 'CIFAR10'],
                         help="The dataset to use for evolution (default: CIFAR10)")
     parser.add_argument('--n_channels', type=int, default=8, help="The initial number of channels (default: 8).")
+    parser.add_argument('--scaling_factor', type=int, default=2,
+                        help="The scaling factor for the number of filters after each reduction cell (default: 2).")
+    parser.add_argument('--n_ops', type=int, default=3, help="The number of operations in each cell (default: 3).")
     parser.add_argument('--stack_size', type=int, default=2, help="The normal cell stack size (default: 2).")
+    parser.add_argument('--n_reduction', type=int, default=3,
+                        help="The number of reduction cells, used if ``stack_size`` is set to zero (default: 3).")
     parser.add_argument('--n_epochs', type=int, default=10, help="The epoch increment for training the classifier ("
                                                                  "default: 10).")
     parser.add_argument('--generations', type=int, default=100, help="The number of generations (default 100).")
-    parser.add_argument('--eta', type=int, default=0.01, help="The base learning rate used in SoftHebb convolutions ("
-                                                              "default: 0.01).")
+    parser.add_argument('--eta', type=float, default=0.01, help="The base learning rate used in SoftHebb convolutions ("
+                                                                "default: 0.01).")
     parser.add_argument('--encoder_batch', type=int, default=32,
                         help="The batch size for training the encoder's SoftHebb convolutions (default: 32).")
     parser.add_argument('--classifier_batch', type=int, default=256,
@@ -319,5 +342,6 @@ if __name__ == '__main__':
     parser.add_argument('--checkpoint', type=str, default=None, help="Optional checkpoint name to continue evolution.")
     args = parser.parse_args()
 
-    evolve(args.dataset, args.n_channels, args.stack_size, args.n_epochs, args.generations, args.eta,
-           args.encoder_batch, args.classifier_batch, args.reduce, args.verbose, args.checkpoint)
+    evolve(args.dataset, args.n_channels, args.scaling_factor, args.n_ops, args.stack_size, args.n_reduction,
+           args.n_epochs, args.generations, args.eta, args.encoder_batch, args.classifier_batch, args.reduce,
+           args.verbose, args.checkpoint)
