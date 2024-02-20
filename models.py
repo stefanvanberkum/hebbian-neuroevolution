@@ -196,16 +196,23 @@ class HebbianCell(Module):
         # Preprocess inputs if necessary.
         self.preprocess_skip = None
         self.preprocess_x = None
+        # if follows_reduction and skip_channels != out_channels:
         if follows_reduction:
             # Reduce spatial shape of the skip input using a factorized reduction.
             # self.preprocess_skip = FactorizedReduction(skip_channels, out_channels, eta)
-            self.preprocess_skip = BNConvTriangle(skip_channels, out_channels, 3, eta, stride=2)
+            self.preprocess_skip = BNConvTriangle(skip_channels, out_channels, 3, eta,
+                                                  stride=2)  # self.preprocess_skip = Sequential(MaxPool2d(  #  #
+            # kernel_size=3, stride=2, padding=1), Padding(out_channels - skip_channels))
+        # elif follows_reduction:
+        #    self.preprocess_skip = MaxPool2d(kernel_size=3, stride=2, padding=1)
         elif skip_channels != out_channels:
             # Apply a 1x1 convolution to make the number of channels match.
-            self.preprocess_skip = BNConvTriangle(skip_channels, out_channels, 3, eta)
+            self.preprocess_skip = BNConvTriangle(skip_channels, out_channels, 3,
+                                                  eta)  # self.preprocess_skip = Padding(out_channels - skip_channels)
         if in_channels != out_channels:
             # Apply a 1x1 convolution to make the number of channels match.
-            self.preprocess_x = BNConvTriangle(in_channels, out_channels, 3, eta)
+            self.preprocess_x = BNConvTriangle(in_channels, out_channels, 3,
+                                               eta)  # self.preprocess_x = Padding(out_channels - in_channels)
 
         # Mark input tensors as used.
         self.used[0] = True

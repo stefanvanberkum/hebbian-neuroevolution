@@ -314,3 +314,23 @@ class FactorizedReduction(Module):
 
         x = torch.cat((self.conv_1(x), self.conv_2(x[:, :, 1:, 1:])), dim=1)
         return x
+
+
+class Padding(Module):
+
+    def __init__(self, padding: int):
+        super(Padding, self).__init__()
+
+        self.padding = padding
+
+    def forward(self, x: Tensor):
+        """Forward pass.
+
+        :param x: Input tensor.
+        :return: The output tensor.
+        """
+
+        padding = [0] * (2 * (len(x.shape) - 1))
+        padding[-1] = self.padding
+        x = torch.nn.functional.pad(x, pad=padding)
+        return x
