@@ -1,0 +1,5 @@
+torch~=2.2.0
+networkx~=3.2.1
+tqdm~=4.66.2
+numpy~=1.26.3
+torchvision~=0.17.0
