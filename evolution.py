@@ -12,6 +12,7 @@ from argparse import ArgumentParser, BooleanOptionalAction
 from datetime import datetime
 from os import makedirs, remove
 from os.path import exists, join
+from typing import TextIO
 
 import numpy as np
 import torch
@@ -58,6 +59,17 @@ def evolve(dataset='CIFAR10', n_channels=8, scaling_factor=2, n_ops=3, stack_siz
     in_channels = 3 if (dataset == 'CIFAR10') else 1
     n_classes = 10
 
+    def log(message: str, console: TextIO, file: TextIO):
+        """Write message to console and log file.
+
+        :param message: The message to print.
+        :param console: The console to print to.
+        :param file: The log file to print to.
+        """
+
+        print(message, file=console)
+        print(message, file=file)
+
     # Initialize evolution or load checkpoint.
     if checkpoint is None:
         # Initialize directory.
@@ -65,9 +77,12 @@ def evolve(dataset='CIFAR10', n_channels=8, scaling_factor=2, n_ops=3, stack_siz
         path = f"runs/{time.strftime('%Y-%m-%d-%H:%M:%S')}"
         arch_path = join(path, "architectures")
         ckpt_path = join(path, "checkpoint.pkl")
+        log_path = join(path, "log.txt")
         makedirs(arch_path)
 
-        print(f"Initializing evolution run {time.strftime('%Y-%m-%d-%H:%M:%S')}")
+        # Open log file.
+        log_file = open(log_path, 'w')
+        log(f"Initializing evolution run {time.strftime('%Y-%m-%d-%H:%M:%S')}", sys.stdout, log_file)
 
         # Initialize random number generator.
         rng = default_rng()
@@ -84,11 +99,15 @@ def evolve(dataset='CIFAR10', n_channels=8, scaling_factor=2, n_ops=3, stack_siz
         oldest = 0  # Oldest architecture.
     else:
         # Load checkpoint.
-        print(f"Loading evolutionary run {checkpoint}")
-
         path = f"runs/{checkpoint}"
         arch_path = join(path, "architectures")
         ckpt_path = join(path, "checkpoint.pkl")
+        log_path = join(path, "log.txt")
+
+        # Open log file.
+        log_file = open(log_path, 'a')
+        log(f"Loading evolutionary run {checkpoint}", sys.stdout, log_file)
+
         rng, P_1, P_2, P_3, P_3_history, accuracies, max_accuracies, start, step, oldest = pickle.load(
             open(ckpt_path, 'rb'))
 
@@ -118,8 +137,8 @@ def evolve(dataset='CIFAR10', n_channels=8, scaling_factor=2, n_ops=3, stack_siz
             update_accuracy = True
 
             if verbose:
-                print(f"[INFO] Loaded checkpoint for architecture {identifier}: epoch {training_state['start_epoch']}/"
-                      f"{training_state['max_epochs']}.", file=sys.stderr)
+                log(f"[INFO] Loaded checkpoint for architecture {identifier}: epoch {training_state['start_epoch']}/"
+                    f"{training_state['max_epochs']}.", sys.stderr, log_file)
         else:
             # Initialize training state.
             training_state = {'start_epoch': 0, 'max_epochs': 3 * n_epochs, 'optimizer_state_dict': {},
@@ -127,7 +146,7 @@ def evolve(dataset='CIFAR10', n_channels=8, scaling_factor=2, n_ops=3, stack_siz
             update_accuracy = False
 
             if verbose:
-                print(f"[INFO] Initialized training state for architecture {identifier}.", file=sys.stderr)
+                log(f"[INFO] Initialized training state for architecture {identifier}.", sys.stderr, log_file)
 
         model = train(encoder, classifier, training, n_epochs, encoder_batch, classifier_batch,
                       checkpoint=training_state)
@@ -157,8 +176,8 @@ def evolve(dataset='CIFAR10', n_channels=8, scaling_factor=2, n_ops=3, stack_siz
         parent = pickle.load(open(join(arch_path, str(parent_id), "architecture.pkl"), 'rb'))
 
         if verbose:
-            print(f"[INFO] Mutating architecture {parent_id} with an accuracy of {accuracies[parent_id]}%.",
-                  file=sys.stderr)
+            log(f"[INFO] Mutating architecture {parent_id} with an accuracy of {accuracies[parent_id]:.2f}%.",
+                sys.stderr, log_file)
 
         child = parent.mutate(identifier=identifier)
         child.save(arch_path)
@@ -166,8 +185,11 @@ def evolve(dataset='CIFAR10', n_channels=8, scaling_factor=2, n_ops=3, stack_siz
 
     if checkpoint is None:
         # Generate, train, and evaluate the initial population of random models.
-        print("Generating initial population...")
-        for i in tqdm(range(50), desc="Architecture", file=sys.stdout):
+        log("Generating initial population...", sys.stdout, log_file)
+        progress_bar = tqdm(range(100), desc="Architecture", file=sys.stdout)
+        for i in progress_bar:
+            print(progress_bar, file=log_file)
+
             # Generate architecture and add to subpopulation one.
             if stack_size == 0:
                 # No normal cell.
@@ -179,16 +201,19 @@ def evolve(dataset='CIFAR10', n_channels=8, scaling_factor=2, n_ops=3, stack_siz
             P_1.add(step)
 
             if verbose:
-                print(f"[INFO] Architecture {step} obtained an accuracy of {accuracies[step]}%.", file=sys.stderr)
+                log(f"[INFO] Architecture {step} obtained an accuracy of {accuracies[step]:.2f}%.", sys.stderr,
+                    log_file)
             step += 1
         max_accuracies.append(max(accuracies))
-        print("Done!\n")
+        log("Done!\n", sys.stdout, log_file)
 
     # Run evolution for the specified number of generations.
-    print("Running evolution...")
+    log("Running evolution...", sys.stdout, log_file)
     progress_bar = tqdm(range(start, generations), desc="Generation", file=sys.stdout)
-    progress_bar.set_description(f"Best accuracy: {max(accuracies)}%")
+    progress_bar.set_description(f"Best accuracy: {max(accuracies):.2f}%")
     for generation in progress_bar:
+        print(progress_bar, file=log_file)
+
         # Sample offspring from the subpopulations if available (five from each).
         for subpopulation in [P_1, P_2, P_3]:
             if len(subpopulation) > 0:
@@ -201,8 +226,8 @@ def evolve(dataset='CIFAR10', n_channels=8, scaling_factor=2, n_ops=3, stack_siz
                     P_1.add(step)
 
                     if verbose:
-                        print(f"[INFO] Child architecture {step} obtained an accuracy of {accuracies[step]}%.",
-                              file=sys.stderr)
+                        log(f"[INFO] Child architecture {step} obtained an accuracy of {accuracies[step]:.2f}%.",
+                            sys.stderr, log_file)
                     step += 1
 
         # Promote the eight best architectures in P_1 to P_2 and advance their training.
@@ -215,8 +240,8 @@ def evolve(dataset='CIFAR10', n_channels=8, scaling_factor=2, n_ops=3, stack_siz
             P_2.add(winner)
 
             if verbose:
-                print(f"[INFO] Architecture {winner} was promoted to P_2, accuracy went from {old_acc}% to "
-                      f"{accuracies[winner]}%.", file=sys.stderr)
+                log(f"[INFO] Architecture {winner} was promoted to P_2, accuracy went from {old_acc:.2f}% to "
+                    f"{accuracies[winner]:.2f}%.", sys.stderr, log_file)
 
         # Promote the four best architectures in P_2 to P_3 and advance their training.
         winners = sorted(P_2, key=lambda x: accuracies[x])[-4:]
@@ -229,8 +254,8 @@ def evolve(dataset='CIFAR10', n_channels=8, scaling_factor=2, n_ops=3, stack_siz
             P_3_history.add(winner)
 
             if verbose:
-                print(f"[INFO] Architecture {winner} was promoted to P_3, accuracy went from {old_acc}% to "
-                      f"{accuracies[winner]}%.", file=sys.stderr)
+                log(f"[INFO] Architecture {winner} was promoted to P_3, accuracy went from {old_acc:.2f}% to "
+                    f"{accuracies[winner]:.2f}%.", sys.stderr, log_file)
 
         # Remove deceased architectures.
         n_new = 5 * ((len(P_1) > 0) + (len(P_2) > 0) + (len(P_3) > 0))  # Five new architectures for each non-empty set.
@@ -243,7 +268,7 @@ def evolve(dataset='CIFAR10', n_channels=8, scaling_factor=2, n_ops=3, stack_siz
                     remove(join(arch_path, str(architecture), "training_state.pt"))
 
         if verbose:
-            print(f"[INFO] Deceased architectures: {oldest}--{oldest + n_new}", file=sys.stderr)
+            log(f"[INFO] Deceased architectures: {oldest}--{oldest + n_new}", sys.stderr, log_file)
         oldest += n_new
 
         # Save checkpoint.
@@ -251,15 +276,16 @@ def evolve(dataset='CIFAR10', n_channels=8, scaling_factor=2, n_ops=3, stack_siz
         pickle.dump(ckpt, open(ckpt_path, 'wb'))
 
         # Update progress bar.
-        progress_bar.set_description(f"Best accuracy: {max(accuracies)}%")
+        progress_bar.set_description(f"Best accuracy: {max(accuracies):.2f}%")
+        max_accuracies.append(max(accuracies))
 
         if verbose:
-            print("[INFO] End of generation.", file=sys.stderr)
-            print(f"[INFO] P_1: {P_1}.", file=sys.stderr)
-            print(f"[INFO] P_2: {P_2}.", file=sys.stderr)
-            print(f"[INFO] P_3: {P_3}.", file=sys.stderr)
+            log("[INFO] End of generation.", sys.stderr, log_file)
+            log(f"[INFO] P_1: {P_1}.", sys.stderr, log_file)
+            log(f"[INFO] P_2: {P_2}.", sys.stderr, log_file)
+            log(f"[INFO] P_3: {P_3}.\n", sys.stderr, log_file)
 
-    print("Done!\n")
+    log("Done!\n", sys.stdout, log_file)
 
     # Remove all model checkpoints.
     for subpopulation in [P_1, P_2, P_3]:
@@ -274,45 +300,33 @@ def evolve(dataset='CIFAR10', n_channels=8, scaling_factor=2, n_ops=3, stack_siz
     np.save(join(path, "max_accuracies.npy"), np.array(max_accuracies))
     np.savetxt(join(path, "max_accuracies.csv"), np.array(max_accuracies), delimiter=',')
 
-    # Retrain the five best models from P_3_history and return the best one.
-    print("Retraining the best models...")
-
-    # Load regular (full) CIFAR-10.
-    training, validation, _ = load('CIFAR10', validation=True)
-
-    with open(join(path, "final_accuracies.csv"), 'w') as out:
-        out.write(f"ID,Accuracy")
-
+    # Record winners.
     winners = sorted(P_3_history, key=lambda x: accuracies[x])[-5:]
+    pickle.dump(winners, open(join(path, "winners.pkl"), 'wb'))
     best_arch = None
     best_acc = 0
-    for winner in tqdm(winners, desc="Architecture", file=sys.stdout):
-        # Load architecture.
-        architecture = pickle.load(open(join(arch_path, str(winner), "architecture.pkl"), 'rb'))
+    with open(join(path, f"accuracies_{n_channels}.csv"), 'w') as out:
+        out.write(f"ID,Accuracy\n")
+        for winner in winners:
+            # Load architecture.
+            architecture = pickle.load(open(join(arch_path, str(winner), "architecture.pkl"), 'rb'))
 
-        # Train and record validation accuracy.
-        enc = HebbianEncoder(in_channels, architecture, n_channels, stack_size, eta, scaling_factor, n_reduction)
-        if stack_size == 0:
-            fc = Classifier(enc.out_channels * (32 // 2 ** n_reduction) ** 2, n_classes)
-        else:
-            fc = Classifier(enc.out_channels, n_classes)
-        m = train(enc, fc, training, 50, 16, classifier_batch)
-        accuracy = test(m, validation, classifier_batch, device)
+            # Save cell visualizations.
+            makedirs(join(path, "winners", str(winner)), exist_ok=True)
+            if architecture.normal:
+                architecture.normal_cell.visualize(join(path, "winners", str(winner), "normal.png"))
+            architecture.reduction_cell.visualize(join(path, "winners", str(winner), "reduction.png"))
 
-        # Save cell visualizations.
-        makedirs(join(path, "winners", str(winner)), exist_ok=True)
-        if architecture.normal:
-            architecture.normal_cell.visualize(join(path, "winners", str(winner), "normal.png"))
-        architecture.reduction_cell.visualize(join(path, "winners", str(winner), "reduction.png"))
+            # Record accuracy.
+            out.write(f"{winner},{accuracies[winner]}\n")
 
-        with open(join(path, "final_accuracies.csv"), 'a') as out:
-            out.write(f"{winner},{accuracy}")
+            if accuracies[winner] > best_acc:
+                best_arch = winner
+                best_acc = accuracies[winner]
 
-        if accuracy > best_acc:
-            best_arch = winner
-            best_acc = accuracy
-    print("Done! Best architecture:")
-    print(f"ID: {best_arch}, accuracy: {best_acc}")
+    log("Best architecture:", sys.stdout, log_file)
+    log(f"ID: {best_arch}, accuracy: {best_acc:.2f}%", sys.stdout, log_file)
+    log_file.close()
 
 
 if __name__ == '__main__':

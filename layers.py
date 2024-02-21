@@ -317,6 +317,9 @@ class FactorizedReduction(Module):
 
 
 class Padding(Module):
+    """Module that applies zero padding to the input tensor along the channel dimension.
+
+    :param padding: The amount of padding to be applied."""
 
     def __init__(self, padding: int):
         super(Padding, self).__init__()
@@ -330,7 +333,6 @@ class Padding(Module):
         :return: The output tensor.
         """
 
-        padding = [0] * (2 * (len(x.shape) - 1))
-        padding[-1] = self.padding
+        padding = (0, 0, 0, 0, 0, self.padding)
         x = torch.nn.functional.pad(x, pad=padding)
         return x
