@@ -36,8 +36,7 @@ def retrain_models(run: str, n_channels: int):
             # Train and record validation accuracy.
             encoder = HebbianEncoder(3, architecture, n_channels, 0, 0.01, 4, 3)
             classifier = Classifier(encoder.out_channels * (32 // 2 ** 3) ** 2, 10)
-            # model = train(encoder, classifier, training, 50, 10, 64)
-            model = train(encoder, classifier, training, 10, 128, 256)
+            model = train(encoder, classifier, training, 50, 10, 64, verbose=True)
             accuracy = test(model, validation, 256, device)
             out.write(f"{winner},{accuracy}\n")
 
