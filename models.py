@@ -16,6 +16,63 @@ from architecture import Architecture, Cell
 from layers import BNConvTriangle, Identity, Zero
 
 
+class HebbNetA(Module):
+    """HebbNet-A."""
+
+    def __init__(self, in_channels: int, n_cells: int = 3, n_channels: int = 64, config: dict | None = None):
+        super(HebbNetA, self).__init__()
+
+        default_config = {"cell_1": {"conv_1": {"eta": 0.01, "tau": 1, "p": None}},
+                          "cell_2": {"conv_1": {"eta": 0.01, "tau": 1, "p": None}},
+                          "cell_3": {"conv_1": {"eta": 0.01, "tau": 1, "p": None}}}
+
+        if config is None:
+            # Set default hyperparameter settings.
+            config = default_config
+        else:
+            # Used for tuning: Configure the last cell according to config, use default for the rest.
+            cell_name = f"cell_{n_cells}"
+            default_config[cell_name] = config
+            config = default_config
+
+        self.cells = ModuleList()
+
+        if n_cells >= 1:
+            cell_1 = HebbCellA(in_channels, n_channels, config["cell_1"])
+            self.cells.append(cell_1)
+        if n_cells >= 2:
+            cell_2 = HebbCellA(4 * n_channels, 4 * n_channels, config["cell_2"])
+            self.cells.append(cell_2)
+        if n_cells >= 3:
+            cell_3 = HebbCellA(4 ** 2 * n_channels, 4 ** 2 * n_channels, config["cell_3"])
+            self.cells.append(cell_3)
+        self.out_channels = 4 ** 3 * n_channels
+
+    @torch.no_grad()
+    def forward(self, x: Tensor):
+        """Forward pass.
+
+        :param x: The input image.
+        :return: The feature encoding.
+        """
+
+        # Run input through the cells.
+        x_skip = x
+        for cell in self.cells:
+            x_next = cell(x_skip, x)
+            x_skip = x
+            x = x_next
+
+
+class HebbCellA(Module):
+    """The evolved reduction cell for HebbNet-A."""
+
+    def __init__(self, in_channels: int, n_channels: int, config: dict):
+        super(HebbCellA, self).__init__()
+
+        eta, tau, p = config['conv_1']["eta"], config['conv_1']["tau"], config['conv_1']["p"]
+
+
 class HebbNet(Module):
     """Hebbian encoder with final classifier.
 
@@ -56,7 +113,7 @@ class HebbianEncoder(Module):
 
     This network is constructed using evolved cells. It has two reduction cells with a stack of normal cells on
     either side (i.e., N-R-N-R-N) followed up by global average pooling if the architecture contains a normal cell.
-    If not, it comprises a sequence of ``n_reduction`` reduction cells followed by 2x2 average pooling.
+    If not, it comprises a sequence of ``n_reduction`` reduction cells.
 
     :param in_channels: The number of input channels.
     :param architecture: An evolved architecture.
@@ -201,7 +258,7 @@ class HebbianCell(Module):
             # Reduce spatial shape of the skip input using a factorized reduction.
             # self.preprocess_skip = FactorizedReduction(skip_channels, out_channels, eta)
             self.preprocess_skip = BNConvTriangle(skip_channels, out_channels, 3, eta,
-                                                  stride=2)  # self.preprocess_skip = Sequential(MaxPool2d(  #  #
+                                                  stride=2)  # self.preprocess_skip = Sequential(MaxPool2d(  #  #  #
             # kernel_size=3, stride=2, padding=1), Padding(out_channels - skip_channels))
         # elif follows_reduction:
         #    self.preprocess_skip = MaxPool2d(kernel_size=3, stride=2, padding=1)

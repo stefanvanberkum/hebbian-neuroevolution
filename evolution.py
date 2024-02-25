@@ -305,7 +305,7 @@ def evolve(dataset='CIFAR10', n_channels=8, scaling_factor=2, n_ops=3, stack_siz
     pickle.dump(winners, open(join(path, "winners.pkl"), 'wb'))
     best_arch = None
     best_acc = 0
-    with open(join(path, f"accuracies_{n_channels}.csv"), 'w') as out:
+    with open(join(path, f"accuracies_reduced.csv"), 'w') as out:
         out.write(f"ID,Accuracy\n")
         for winner in winners:
             # Load architecture.
