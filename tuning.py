@@ -5,10 +5,10 @@ import sys
 from argparse import ArgumentParser, BooleanOptionalAction
 from os import makedirs
 from os.path import join
-import ray.tune import grid_search, Tuner
-from ray.train import RunConfig
 
 import torch
+from ray.train import RunConfig
+from ray.tune import Tuner, grid_search
 from tqdm import tqdm
 
 from dataloader import load
@@ -17,7 +17,7 @@ from training import test, train
 
 
 def retrain(run: str, n_channels: int):
-    """Retrains the best five models resulting from evolution.
+    """Retrains the best five models from evolution.
 
     :param run: The evolution run.
     :param n_channels: The initial number of channels.
@@ -28,7 +28,7 @@ def retrain(run: str, n_channels: int):
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     # Load CIFAR-10.
-    training, validation, _ = load('CIFAR10', validation=True)
+    training, validation, _ = load('CIFAR10', validation=True, seed=165326022024)
 
     with open(join(path, f"accuracies_{n_channels}.csv"), 'w') as out:
         out.write(f"ID,Accuracy\n")
@@ -75,12 +75,8 @@ def tune(layer: int, n_channels: int):
 
     # Stage one.
     search_space = {
-        "conv_1": {
-            "eta": grid_search([0.001, 0.005, 0.01, 0.05, 0.1]),
-            "tau": grid_search([0.5, 1, 1.5, 2, 4]),
-            "p": None
-        }
-    }
+        "conv_1": {"eta": grid_search([0.001, 0.005, 0.01, 0.05, 0.1]), "tau": grid_search([0.5, 1, 1.5, 2, 4]),
+                   "p": None}}
     storage_path = f"tuning/layer_{layer}"
     name = "stage_one"
     run_config = RunConfig(storage_path=storage_path, name=name)
@@ -114,7 +110,6 @@ def tune(layer: int, n_channels: int):
     print("")
     with open(f"tuning/layer_{layer}", 'w') as out:
         out.write(config)
-
 
 
 if __name__ == '__main__':

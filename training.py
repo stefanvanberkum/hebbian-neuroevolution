@@ -20,7 +20,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.data import DataLoader, Dataset
 
 from dataloader import load
-from models import Classifier, HebbNet, SoftHebbSmall
+from models import Classifier, HebbNet, SoftHebbNet
 
 
 def train(encoder: Module, classifier: Module, data: Dataset, n_epochs: int, encoder_batch: int, classifier_batch: int,
@@ -251,7 +251,7 @@ if __name__ == '__main__':
 
     # Get setup.
     if args.model == 'SoftHebbSmall':
-        encoder_net = SoftHebbSmall()
+        encoder_net = SoftHebbNet()
         in_features = int((initial_size / (2 ** 3)) ** 2 * 1536)
         classifier_net = Classifier(in_features=in_features, out_features=n_classes)
     else:

@@ -4,13 +4,16 @@ Classes
 =======
 - :class:`BNConvTriangle`: Combination of batch normalization, Hebbian convolution, and triangle activation.
 - :class:`HebbConv2d`: Hebbian convolution.
+- :class:`Zero`: Module that zeroes out the input.
+- :class:`Identity`: Module that applies an identity operation.
+TODO: Add others.
 """
 
 import math
 
 import torch
 from torch import Tensor
-from torch.nn import BatchNorm2d, Module, ReflectionPad2d
+from torch.nn import BatchNorm2d, Conv2d, Module, ReLU, ReflectionPad2d
 from torch.nn.functional import conv2d
 
 from activations import RePUTriangle, ScaledSoftmax2d, Triangle
@@ -60,8 +63,7 @@ class HebbConv2d(Module):
     """Hebbian convolution.
 
     Applies reflective padding to ensure that the input shape equals the output shape. This method is based on the
-    paper and corresponding code by [1]_. It assumes an even image size and is only tested for operations in the
-    OpSet defined in architecture.py.
+    paper and corresponding code by [1]_. It is only tested for operations in the OpSet defined in architecture.py.
 
     References
     ==========
@@ -319,7 +321,8 @@ class FactorizedReduction(Module):
 class Padding(Module):
     """Module that applies zero padding to the input tensor along the channel dimension.
 
-    :param padding: The amount of padding to be applied."""
+    :param padding: The amount of padding to be applied.
+    """
 
     def __init__(self, padding: int):
         super(Padding, self).__init__()
@@ -335,4 +338,38 @@ class Padding(Module):
 
         padding = (0, 0, 0, 0, 0, self.padding)
         x = torch.nn.functional.pad(x, pad=padding)
+        return x
+
+
+class BNConvReLU(Module):
+    """Combination of batch normalization, a regular convolution, and a ReLU.
+
+    :param in_channels: The number of input channels.
+    :param out_channels: The number of output channels.
+    :param kernel_size: The kernel size.
+    """
+
+    def __init__(self, in_channels: int, out_channels: int, kernel_size: int | tuple[int, int], stride=1, dilation=1):
+        super(BNConvReLU, self).__init__()
+
+        self.bn = BatchNorm2d(num_features=in_channels, affine=False)
+        if stride == 1:
+            self.conv = Conv2d(in_channels, out_channels, kernel_size, dilation=dilation, padding_mode='same')
+        elif dilation == 2:
+            self.conv = Conv2d(in_channels, out_channels, kernel_size, stride=2, dilation=2, padding=1,
+                               padding_mode='reflect')
+        else:
+            self.conv = Conv2d(in_channels, out_channels, kernel_size, stride=2)
+        self.relu = ReLU()
+
+    def forward(self, x: Tensor):
+        """Forward pass.
+
+        :param x: Input tensor.
+        :return: The output tensor.
+        """
+
+        x = self.bn(x)
+        x = self.conv(x)
+        x = self.relu(x)
         return x

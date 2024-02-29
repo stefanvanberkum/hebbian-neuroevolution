@@ -186,7 +186,7 @@ def evolve(dataset='CIFAR10', n_channels=8, scaling_factor=2, n_ops=3, stack_siz
     if checkpoint is None:
         # Generate, train, and evaluate the initial population of random models.
         log("Generating initial population...", sys.stdout, log_file)
-        progress_bar = tqdm(range(100), desc="Architecture", file=sys.stdout)
+        progress_bar = tqdm(range(60), desc="Architecture", file=sys.stdout)
         for i in progress_bar:
             print(progress_bar, file=log_file)
 

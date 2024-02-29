@@ -13,13 +13,13 @@ from torch import Tensor
 from torch.nn import AdaptiveAvgPool2d, AvgPool2d, Dropout, Flatten, Linear, MaxPool2d, Module, ModuleList, Sequential
 
 from architecture import Architecture, Cell
-from layers import BNConvTriangle, Identity, Zero
+from layers import BNConvReLU, BNConvTriangle, Identity, Padding, Zero
 
 
 class HebbNetA(Module):
     """HebbNet-A."""
 
-    def __init__(self, in_channels: int, n_cells: int = 3, n_channels: int = 64, config: dict | None = None):
+    def __init__(self, in_channels: int = 3, n_cells: int = 3, n_channels: int = 64, config: dict | None = None):
         super(HebbNetA, self).__init__()
 
         default_config = {"cell_1": {"conv_1": {"eta": 0.01, "tau": 1, "p": None}},
@@ -41,11 +41,14 @@ class HebbNetA(Module):
             cell_1 = HebbCellA(in_channels, n_channels, config["cell_1"])
             self.cells.append(cell_1)
         if n_cells >= 2:
+            # TODO: What is the exact number of input channels?
             cell_2 = HebbCellA(4 * n_channels, 4 * n_channels, config["cell_2"])
             self.cells.append(cell_2)
         if n_cells >= 3:
+            # TODO: What is the exact number of input channels?
             cell_3 = HebbCellA(4 ** 2 * n_channels, 4 ** 2 * n_channels, config["cell_3"])
             self.cells.append(cell_3)
+        # TODO: What is the exact number of output channels?
         self.out_channels = 4 ** 3 * n_channels
 
     @torch.no_grad()
@@ -71,6 +74,8 @@ class HebbCellA(Module):
         super(HebbCellA, self).__init__()
 
         eta, tau, p = config['conv_1']["eta"], config['conv_1']["tau"], config['conv_1']["p"]
+
+        self.convs = ModuleList
 
 
 class HebbNet(Module):
@@ -127,6 +132,9 @@ class HebbianEncoder(Module):
     def __init__(self, in_channels: int, architecture: Architecture, n_channels: int, stack_size: int, eta: float,
                  scaling_factor=2, n_reduction=3):
         super(HebbianEncoder, self).__init__()
+
+        # self.initial_conv = BNConvTriangle(in_channels, n_channels, kernel_size=3, eta=0.01)
+        # in_channels = n_channels
 
         reduction_cell = architecture.reduction_cell
 
@@ -209,6 +217,9 @@ class HebbianEncoder(Module):
         :return: The feature encoding.
         """
 
+        # Apply initial convolution.
+        # x = self.initial_conv(x)
+
         # Run input through the cells.
         x_skip = x
         for cell in self.cells:
@@ -250,6 +261,7 @@ class HebbianCell(Module):
         self.used = [False] * n_nodes  # List that records whether a nodes' output is used.
         self.n_ops = n_nodes - 2
 
+        # TODO: Clean this up.
         # Preprocess inputs if necessary.
         self.preprocess_skip = None
         self.preprocess_x = None
@@ -257,21 +269,28 @@ class HebbianCell(Module):
         if follows_reduction:
             # Reduce spatial shape of the skip input using a factorized reduction.
             # self.preprocess_skip = FactorizedReduction(skip_channels, out_channels, eta)
-            self.preprocess_skip = BNConvTriangle(skip_channels, out_channels, 3, eta,
-                                                  stride=2)  # self.preprocess_skip = Sequential(MaxPool2d(  #  #  #
-            # kernel_size=3, stride=2, padding=1), Padding(out_channels - skip_channels))
+            # self.preprocess_skip = BNConvTriangle(skip_channels, out_channels, 3, eta,
+            #                                      stride=2)
+            self.preprocess_skip = MaxPool2d(kernel_size=3, stride=2, padding=1)
         # elif follows_reduction:
         #    self.preprocess_skip = MaxPool2d(kernel_size=3, stride=2, padding=1)
-        elif skip_channels != out_channels:
-            # Apply a 1x1 convolution to make the number of channels match.
-            self.preprocess_skip = BNConvTriangle(skip_channels, out_channels, 3,
-                                                  eta)  # self.preprocess_skip = Padding(out_channels - skip_channels)
-        if in_channels != out_channels:
-            # Apply a 1x1 convolution to make the number of channels match.
-            self.preprocess_x = BNConvTriangle(in_channels, out_channels, 3,
-                                               eta)  # self.preprocess_x = Padding(out_channels - in_channels)
+        # elif skip_channels != out_channels:
+        # Apply a 1x1 convolution to make the number of channels match.
+        #    self.preprocess_skip = BNConvTriangle(skip_channels, out_channels, 3,
+        #                                          eta)  # self.preprocess_skip = Padding(out_channels - skip_channels)
+        # if in_channels != out_channels:
+        #    # Apply a 1x1 convolution to make the number of channels match.
+        #    self.preprocess_x = BNConvTriangle(in_channels, out_channels, 3, eta)  # self.preprocess_x = Padding(
+        # out_channels - in_channels)
 
-        # Mark input tensors as used.
+        # Keep track of the output channels for each node to apply zero padding where necessary.
+        node_channels = [0] * n_nodes
+        node_channels[0] = skip_channels
+        node_channels[1] = in_channels
+        # node_channels[0] = out_channels
+        # node_channels[1] = out_channels
+
+        # Mark input tensors as used (these are never appended to the output).
         self.used[0] = True
         self.used[1] = True
 
@@ -285,23 +304,49 @@ class HebbianCell(Module):
                 op_left = left_attr['op']
                 op_right = right_attr['op']
 
-                # Translate and register operations. Only apply stride to original inputs.
+                # Translate operations to modules. Only apply stride to original inputs.
                 if left == 0 or left == 1:
-                    self.layers.append(self.translate(op_left, out_channels, eta, stride))
+                    module_left = self.translate(op_left, node_channels[left], out_channels, eta, stride)
                 else:
-                    self.layers.append(self.translate(op_left, out_channels, eta, stride=1))
+                    module_left = self.translate(op_left, node_channels[left], out_channels, eta, stride=1)
                 if right == 0 or right == 1:
-                    self.layers.append(self.translate(op_right, out_channels, eta, stride))
+                    module_right = self.translate(op_right, node_channels[right], out_channels, eta, stride)
                 else:
-                    self.layers.append(self.translate(op_right, out_channels, eta, stride=1))
+                    module_right = self.translate(op_right, node_channels[right], out_channels, eta, stride=1)
+
+                # Record output channels for each op (only changes for convolutions).
+                if "conv" in op_left:
+                    left_channels = out_channels
+                else:
+                    left_channels = node_channels[left]
+                if "conv" in op_right:
+                    right_channels = out_channels
+                else:
+                    right_channels = node_channels[right]
+
+                # Apply padding if necessary.
+                if left_channels < right_channels:
+                    padding = Padding(right_channels - left_channels)
+                    module_left = Sequential(module_left, padding)
+                if right_channels < left_channels:
+                    padding = Padding(left_channels - right_channels)
+                    module_right = Sequential(module_right, padding)
+
+                # Record the number of output channels for this node.
+                node_channels[node] = max(left_channels, right_channels)
+
+                # Register operations.
+                self.layers.append(module_left)
+                self.layers.append(module_right)
 
                 # Mark inputs as used.
                 self.used[left] = True
                 self.used[right] = True
 
+        # TODO: Clean this up.
         # Store the number of output channels after concatenation of unused intermediate outputs.
-        n_unused = n_nodes - sum(self.used)
-        self.out_channels = n_unused * out_channels
+        # n_unused = n_nodes - sum(self.used)
+        self.out_channels = sum([node_channels[node] for node in range(n_nodes) if not self.used[node]])
 
     @torch.no_grad()
     def forward(self, x_skip: Tensor, x: Tensor):
@@ -316,7 +361,7 @@ class HebbianCell(Module):
         if self.preprocess_skip is not None:
             x_skip = self.preprocess_skip(x_skip)
         if self.preprocess_x is not None:
-            x = self.preprocess_x(x)
+            x = self.preprocess_x(x)  # TODO: Remove if unused.
 
         # Record intermediate outputs.
         out = [Tensor()] * (self.n_ops + 2)
@@ -343,11 +388,12 @@ class HebbianCell(Module):
         return torch.cat(unused, dim=-3)
 
     @staticmethod
-    def translate(op: str, n_channels: int, eta: float, stride: int):
+    def translate(op: str, in_channels: int, n_channels: int, eta: float, stride: int):
         """Translate an operation from string name to the corresponding PyTorch module.
 
         :param op: The operation name.
-        :param n_channels: The number of channels.
+        :param in_channels: The number of input channels.
+        :param n_channels: The number of channels in this cell.
         :param eta: The base learning rate used in SoftHebb convolutions.
         :param stride: The stride to be used for the operation.
         :return: The corresponding PyTorch module.
@@ -367,18 +413,18 @@ class HebbianCell(Module):
             return MaxPool2d(kernel_size=3, stride=stride, padding=1)
         elif op == 'conv_1':
             # 1x1 Hebbian convolution.
-            return BNConvTriangle(n_channels, n_channels, kernel_size=1, eta=eta, stride=stride)
+            return BNConvTriangle(in_channels, n_channels, kernel_size=1, eta=eta, stride=stride)
         elif op == 'conv_3':
             # 3x3 Hebbian convolution.
-            return BNConvTriangle(n_channels, n_channels, kernel_size=3, eta=eta, stride=stride)
+            return BNConvTriangle(in_channels, n_channels, kernel_size=3, eta=eta, stride=stride)
         elif op == 'conv_13_31':
             # 1x3 and then 3x1 Hebbian convolution.
-            conv_13 = BNConvTriangle(n_channels, n_channels, kernel_size=(1, 3), eta=eta, stride=(1, stride))
+            conv_13 = BNConvTriangle(in_channels, n_channels, kernel_size=(1, 3), eta=eta, stride=(1, stride))
             conv_31 = BNConvTriangle(n_channels, n_channels, kernel_size=(3, 1), eta=eta, stride=(stride, 1))
             return Sequential(conv_13, conv_31)
         elif op == 'dilated_conv_5':
             # 5x5 dilated Hebbian convolution (i.e., 3x3 with dilation=2).
-            return BNConvTriangle(n_channels, n_channels, kernel_size=3, eta=eta, stride=stride, dilation=2)
+            return BNConvTriangle(in_channels, n_channels, kernel_size=3, eta=eta, stride=stride, dilation=2)
         else:
             raise ValueError(f"Operation {op} not found (internal error).")
 
@@ -414,14 +460,14 @@ class Classifier(Module):
         return x
 
 
-class SoftHebbSmall(Module):
+class SoftHebbNet(Module):
     """The small SoftHebb encoder network for CIFAR-10.
 
     Includes tuned hyperparameter settings.
     """
 
     def __init__(self):
-        super(SoftHebbSmall, self).__init__()
+        super(SoftHebbNet, self).__init__()
 
         self.layer_1 = BNConvTriangle(in_channels=3, out_channels=96, kernel_size=5, eta=0.08, temp=1, p=0.7)
         self.pool_1 = MaxPool2d(kernel_size=4, stride=2, padding=1)
@@ -429,6 +475,8 @@ class SoftHebbSmall(Module):
         self.pool_2 = MaxPool2d(kernel_size=4, stride=2, padding=1)
         self.layer_3 = BNConvTriangle(in_channels=384, out_channels=1536, kernel_size=3, eta=0.01, temp=1 / 0.25)
         self.pool_3 = AvgPool2d(kernel_size=2, stride=2)
+
+        self.out_channels = 1536
 
     @torch.no_grad()
     def forward(self, x: Tensor):
@@ -447,3 +495,53 @@ class SoftHebbSmall(Module):
         x = self.layer_3(x)
         x = self.pool_3(x)
         return x
+
+
+class SoftHebbBPNet(Module):
+    """The small backpropagation SoftHebb network for CIFAR-10."""
+
+    def __init__(self):
+        super(SoftHebbBPNet, self).__init__()
+
+        self.layer_1 = BNConvReLU(in_channels=3, out_channels=96, kernel_size=5)
+        self.pool_1 = MaxPool2d(kernel_size=4, stride=2, padding=1)
+        self.layer_2 = BNConvReLU(in_channels=96, out_channels=384, kernel_size=3)
+        self.pool_2 = MaxPool2d(kernel_size=4, stride=2, padding=1)
+        self.layer_3 = BNConvReLU(in_channels=384, out_channels=1536, kernel_size=3)
+        self.pool_3 = AvgPool2d(kernel_size=2, stride=2)
+
+        self.flatten = Flatten(start_dim=-3, end_dim=-1)
+        self.dropout = Dropout()
+        self.linear = Linear(1536 * (32 // 2 ** 3) ** 2, 10)
+
+    @torch.no_grad()
+    def forward(self, x: Tensor):
+        """Forward pass.
+
+        Runs the sample through the network.
+
+        :param x: Tensor of shape (N, 3, 32, 32) or (3, 32, 32).
+        :return: Output logits tensor of shape (N, 10) or (10).
+        """
+
+        x = self.layer_1(x)
+        x = self.pool_1(x)
+        x = self.layer_2(x)
+        x = self.pool_2(x)
+        x = self.layer_3(x)
+        x = self.pool_3(x)
+
+        x = self.flatten(x)
+        x = self.dropout(x)
+        x = self.linear(x)
+        return x
+
+
+class BPNetA(Module):
+    """Backpropagation variant of HebbNet-A for CIFAR-10."""
+
+    def __init__(self, in_channels: int = 3, n_cells: int = 3, n_channels: int = 64):
+        super(BPNetA, self).__init__()
+
+        # TODO: Adapt HebbNetA code to BP.
+        self.conv = BNConvReLU(in_channels, n_channels, 3)
