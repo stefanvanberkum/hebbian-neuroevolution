@@ -133,8 +133,8 @@ class HebbianEncoder(Module):
                  scaling_factor=2, n_reduction=3):
         super(HebbianEncoder, self).__init__()
 
-        # self.initial_conv = BNConvTriangle(in_channels, n_channels, kernel_size=3, eta=0.01)
-        # in_channels = n_channels
+        self.initial_conv = BNConvTriangle(in_channels, n_channels, kernel_size=3, eta=0.01)
+        in_channels = n_channels
 
         reduction_cell = architecture.reduction_cell
 
@@ -218,7 +218,7 @@ class HebbianEncoder(Module):
         """
 
         # Apply initial convolution.
-        # x = self.initial_conv(x)
+        x = self.initial_conv(x)
 
         # Run input through the cells.
         x_skip = x
@@ -269,9 +269,9 @@ class HebbianCell(Module):
         if follows_reduction:
             # Reduce spatial shape of the skip input using a factorized reduction.
             # self.preprocess_skip = FactorizedReduction(skip_channels, out_channels, eta)
-            # self.preprocess_skip = BNConvTriangle(skip_channels, out_channels, 3, eta,
-            #                                      stride=2)
-            self.preprocess_skip = MaxPool2d(kernel_size=3, stride=2, padding=1)
+            self.preprocess_skip = BNConvTriangle(skip_channels, out_channels, 3, eta,
+                                                  stride=2)  # self.preprocess_skip = MaxPool2d(kernel_size=3,
+            # stride=2, padding=1)
         # elif follows_reduction:
         #    self.preprocess_skip = MaxPool2d(kernel_size=3, stride=2, padding=1)
         # elif skip_channels != out_channels:
@@ -285,9 +285,9 @@ class HebbianCell(Module):
 
         # Keep track of the output channels for each node to apply zero padding where necessary.
         node_channels = [0] * n_nodes
-        node_channels[0] = skip_channels
+        # node_channels[0] = skip_channels
         node_channels[1] = in_channels
-        # node_channels[0] = out_channels
+        node_channels[0] = out_channels
         # node_channels[1] = out_channels
 
         # Mark input tensors as used (these are never appended to the output).
