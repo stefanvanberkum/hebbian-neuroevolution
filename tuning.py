@@ -59,15 +59,15 @@ def tune(layer: int, n_channels: int):
     # Load CIFAR-10.
     training, validation, _ = load('CIFAR10', validation=True)
 
-    def objective(config: dict):
+    def objective(configuration: dict):
         """Objective used for tuning.
 
-        :param config: The hyperparameter settings.
+        :param configuration: The hyperparameter settings.
         :return: The validation accuracy.
         """
 
         # Initialize model.
-        encoder = HebbNetA(in_channels=3, n_cells=layer, n_channels=n_channels, config=config)
+        encoder = HebbNetA(in_channels=3, n_cells=layer, n_channels=n_channels, config=configuration)
         classifier = Classifier(encoder.out_channels * (32 // 2 ** layer) ** 2, 10)
         model = train(encoder, classifier, training, 50, 10, 64)
         accuracy = test(model, validation, 256, device)

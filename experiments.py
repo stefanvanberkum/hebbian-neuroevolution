@@ -24,14 +24,14 @@ from torch.utils.data import ConcatDataset, DataLoader, Dataset, Subset
 from tqdm import tqdm
 
 from dataloader import load
-from models import BPNetA, Classifier, HebbNet, HebbNetA, SoftHebbBPNet, SoftHebbNet
+from models import BPNetA, Classifier, HebbNet, HebbNetA, NoSkipNetA, SoftHebbBPNet, SoftHebbNet
 from training import train
 
 
 def evaluate(model: str, mode: str, dataset: str):
     """Train and test a model on a given dataset.
 
-    :param model: The model to test, one of: {HebbNet, SoftHebb}.
+    :param model: The model to test, one of: {HebbNet, SoftHebb, NoSkip}.
     :param mode: The training mode, one of: {Hebbian, BP}
     :param dataset: The dataset to test on, one of: {CIFAR10, CIFAR100, SVHN}.
     """
@@ -53,6 +53,8 @@ def evaluate(model: str, mode: str, dataset: str):
                 encoder = SoftHebbNet()
             elif model == "SoftHebb" and mode == "BP":
                 encoder = SoftHebbBPNet()  # Includes classifier.
+            elif model == "NoSkip" and mode == "Hebbian":
+                enoder = NoSkipNetA()
             else:
                 raise ValueError(f"The {mode} {model} model not found.")
             if mode == "Hebbian":
@@ -323,6 +325,7 @@ def bayesian_analysis():
 if __name__ == '__main__':
     # For command-line use.
     parser = ArgumentParser()
+    parser.add_argument('--model', choices=['HebbNet', 'SoftHebb', 'NoSkip'], help="The model to test.")
     parser.add_argument('--mode', choices=['Hebbian', 'BP'], help="The training mode to be applied.")
     parser.add_argument('--CIFAR10', action=BooleanOptionalAction, help="Turn on this option to test on CIFAR-10.")
     parser.add_argument('--CIFAR100', action=BooleanOptionalAction, help="Turn on this option to test on CIFAR-100.")

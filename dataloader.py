@@ -1,4 +1,4 @@
-"""This module provides methods for loading and preproccesing data.
+"""This module provides methods for loading and preprocessing data.
 
 The fast versions of datasets eliminate the PIL image format following [1]_ based on
 https://github.com/y0ast/pytorch-snippets/tree/main/fast_mnist.

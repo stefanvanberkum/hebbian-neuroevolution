@@ -13,7 +13,7 @@ from torch import Tensor
 from torch.nn import AdaptiveAvgPool2d, AvgPool2d, Dropout, Flatten, Linear, MaxPool2d, Module, ModuleList, Sequential
 
 from architecture import Architecture, Cell
-from layers import BNConvReLU, BNConvTriangle, Identity, Padding, Zero
+from layers import BNConvReLU, BNConvTriangle, Identity, Zero
 
 
 class HebbNetA(Module):
@@ -130,10 +130,10 @@ class HebbianEncoder(Module):
     """
 
     def __init__(self, in_channels: int, architecture: Architecture, n_channels: int, stack_size: int, eta: float,
-                 scaling_factor=2, n_reduction=3):
+                 scaling_factor=4, n_reduction=3):
         super(HebbianEncoder, self).__init__()
 
-        self.initial_conv = BNConvTriangle(in_channels, n_channels, kernel_size=3, eta=0.01)
+        self.initial_conv = BNConvTriangle(in_channels, n_channels, kernel_size=3, eta=eta)
         in_channels = n_channels
 
         reduction_cell = architecture.reduction_cell
@@ -206,7 +206,6 @@ class HebbianEncoder(Module):
                 in_channels = cell.out_channels  # The next direct input is the current output.
                 out_channels *= scaling_factor  # Scale the number of filters.
             self.out_channels = in_channels  # Record the final number of output channels.
-
             self.pool = None
 
     @torch.no_grad()
@@ -274,21 +273,21 @@ class HebbianCell(Module):
             # stride=2, padding=1)
         # elif follows_reduction:
         #    self.preprocess_skip = MaxPool2d(kernel_size=3, stride=2, padding=1)
-        # elif skip_channels != out_channels:
-        # Apply a 1x1 convolution to make the number of channels match.
-        #    self.preprocess_skip = BNConvTriangle(skip_channels, out_channels, 3,
-        #                                          eta)  # self.preprocess_skip = Padding(out_channels - skip_channels)
-        # if in_channels != out_channels:
-        #    # Apply a 1x1 convolution to make the number of channels match.
-        #    self.preprocess_x = BNConvTriangle(in_channels, out_channels, 3, eta)  # self.preprocess_x = Padding(
-        # out_channels - in_channels)
+        elif skip_channels != out_channels:
+            # Apply a 1x1 convolution to make the number of channels match.
+            self.preprocess_skip = BNConvTriangle(skip_channels, out_channels, 3,
+                                                  eta)  # self.preprocess_skip = Padding(out_channels - skip_channels)
+        if in_channels != out_channels:
+            # Apply a 1x1 convolution to make the number of channels match.
+            self.preprocess_x = BNConvTriangle(in_channels, out_channels, 3,
+                                               eta)  # self.preprocess_x = Padding(out_channels - in_channels)
 
         # Keep track of the output channels for each node to apply zero padding where necessary.
         node_channels = [0] * n_nodes
         # node_channels[0] = skip_channels
-        node_channels[1] = in_channels
+        # node_channels[1] = in_channels
         node_channels[0] = out_channels
-        # node_channels[1] = out_channels
+        node_channels[1] = out_channels
 
         # Mark input tensors as used (these are never appended to the output).
         self.used[0] = True
@@ -325,12 +324,12 @@ class HebbianCell(Module):
                     right_channels = node_channels[right]
 
                 # Apply padding if necessary.
-                if left_channels < right_channels:
-                    padding = Padding(right_channels - left_channels)
-                    module_left = Sequential(module_left, padding)
-                if right_channels < left_channels:
-                    padding = Padding(left_channels - right_channels)
-                    module_right = Sequential(module_right, padding)
+                # if left_channels < right_channels:
+                #    padding = Padding(right_channels - left_channels)
+                #    module_left = Sequential(module_left, padding)
+                # if right_channels < left_channels:
+                #    padding = Padding(left_channels - right_channels)
+                #    module_right = Sequential(module_right, padding)
 
                 # Record the number of output channels for this node.
                 node_channels[node] = max(left_channels, right_channels)
@@ -345,8 +344,9 @@ class HebbianCell(Module):
 
         # TODO: Clean this up.
         # Store the number of output channels after concatenation of unused intermediate outputs.
-        # n_unused = n_nodes - sum(self.used)
-        self.out_channels = sum([node_channels[node] for node in range(n_nodes) if not self.used[node]])
+        n_unused = n_nodes - sum(self.used)
+        self.out_channels = n_unused * out_channels  # self.out_channels = sum([node_channels[node] for node in  #  #
+        # range(n_nodes) if not self.used[node]])
 
     @torch.no_grad()
     def forward(self, x_skip: Tensor, x: Tensor):
@@ -458,6 +458,10 @@ class Classifier(Module):
         x = self.dropout(x)
         x = self.linear(x)
         return x
+
+
+class NoSkipNetA(Module):
+    """HebbNet-A without skip connections."""
 
 
 class SoftHebbNet(Module):
