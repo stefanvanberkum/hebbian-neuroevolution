@@ -37,7 +37,7 @@ def retrain(run: str, n_channels: int):
             architecture = pickle.load(open(join(path, "architectures", str(winner), "architecture.pkl"), 'rb'))
 
             # Train and record validation accuracy.
-            encoder = HebbianEncoder(3, architecture, n_channels, 0, 0.01, 4, 3)
+            encoder = HebbianEncoder(3, architecture, n_channels, 0, 0.01, 4, 2)
             classifier = Classifier(encoder.out_channels * (32 // 2 ** 3) ** 2, 10)
             model = train(encoder, classifier, training, 50, 10, 64, verbose=True)
             accuracy = test(model, validation, 256, device)

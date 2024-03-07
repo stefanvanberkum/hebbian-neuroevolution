@@ -121,7 +121,7 @@ def evolve(dataset='CIFAR10', n_channels=8, scaling_factor=2, n_ops=3, stack_siz
         # Train and compute validation accuracy.
         encoder = HebbianEncoder(in_channels, arch, n_channels, stack_size, eta, scaling_factor, n_reduction)
         if stack_size == 0:
-            classifier = Classifier(encoder.out_channels * (32 // 2 ** n_reduction) ** 2, n_classes)
+            classifier = Classifier(encoder.out_channels * (32 // 2 ** 3) ** 2, n_classes)
         else:
             classifier = Classifier(encoder.out_channels, n_classes)
 
