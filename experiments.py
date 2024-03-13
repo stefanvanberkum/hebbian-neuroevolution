@@ -1,6 +1,7 @@
 """This module provides methods for running the experiments after evolution."""
 import pickle
 import statistics
+import sys
 from argparse import ArgumentParser, BooleanOptionalAction
 from os import makedirs
 from os.path import exists, join
@@ -232,6 +233,7 @@ def visualize():
             path = f"results/visualization/{dataset}/{i}"
             makedirs(path)
             sample = data[samples[i]]
+            # TODO: Just make custom loops over cells and convs.
             for j in range(len(encoder.cells)):
                 cell = encoder.cells[j]
                 for k in range(len(cell.convs)):
@@ -264,6 +266,10 @@ def bayesian_analysis():
             print("Loaded checkpoint!")
         else:
             train_data, test_data = load(dataset)
+            train_data.data = train_data.data.cpu()
+            train_data.targets = train_data.targets.cpu()
+            test_data.data = test_data.data.cpu()
+            test_data.targets = test_data.targets.cpu()
             dataset = ConcatDataset([train_data, test_data])
 
             folds = StratifiedKFold(n_splits=10, shuffle=True)
@@ -272,9 +278,13 @@ def bayesian_analysis():
             with open(f"results/cv_accuracies_{dataset}.csv", 'w') as out:
                 out.write("HebbNet,SoftHebb\n")
                 for fold, (train_ids, test_ids) in tqdm(enumerate(folds.split(dataset.data, dataset.targets)),
-                                                        description="Fold"):
+                                                        desc="Fold", file=sys.stdout):
                     train_data = Subset(dataset, train_ids)
+                    train_data.data = train_data.dataset.data.to(device)
+                    train_data.targets = train_data.dataset.targets.to(device)
                     test_data = Subset(dataset, test_ids)
+                    test_data.data = test_data.dataset.data.to(device)
+                    test_data.targets = test_data.dataset.targets.to(device)
 
                     # Train and evaluate HebbNet-A.
                     encoder = HebbNetA()

@@ -19,37 +19,46 @@ from layers import BNConvReLU, BNConvTriangle, Identity, Padding, Zero
 class HebbNetA(Module):
     """HebbNet-A."""
 
-    def __init__(self, in_channels: int = 3, n_cells: int = 3, n_channels: int = 64, config: dict | None = None):
+    def __init__(self, in_channels: int = 3, config: dict | None = None):
         super(HebbNetA, self).__init__()
 
-        default_config = {"cell_1": {"conv_1": {"eta": 0.01, "tau": 1, "p": None}},
-                          "cell_2": {"conv_1": {"eta": 0.01, "tau": 1, "p": None}},
-                          "cell_3": {"conv_1": {"eta": 0.01, "tau": 1, "p": None}}}
+        default_config = {"n_channels": 32, "alpha": 0.001, "dropout": 0.5, "n_epochs": 50,
+                          "initial_conv": {"eta": 0.01, "tau": 1, "p": None},
+                          "cell_1": {"pre_skip": {"eta": 0.01, "tau": 1, "p": None},
+                                     "conv_skip": {"eta": 0.01, "tau": 1, "p": None},
+                                     "conv_1_add": {"eta": 0.01, "tau": 1, "p": None},
+                                     "conv_1_cat": {"eta": 0.01, "tau": 1, "p": None},
+                                     "dil_conv_5": {"eta": 0.01, "tau": 1, "p": None}},
+                          "cell_2": {"pre_skip": {"eta": 0.01, "tau": 1, "p": None},
+                                     "conv_skip": {"eta": 0.01, "tau": 1, "p": None},
+                                     "conv_1_add": {"eta": 0.01, "tau": 1, "p": None},
+                                     "conv_1_cat": {"eta": 0.01, "tau": 1, "p": None},
+                                     "dil_conv_5": {"eta": 0.01, "tau": 1, "p": None}}}
 
         if config is None:
-            # Set default hyperparameter settings.
+            # Set to default hyperparameter settings.
             config = default_config
-        else:
-            # Used for tuning: Configure the last cell according to config, use default for the rest.
-            cell_name = f"cell_{n_cells}"
-            default_config[cell_name] = config
-            config = default_config
+        self.config = config
 
-        self.cells = ModuleList()
+        # Initial 5x5 convolution.
+        n_channels = int(config["n_channels"])
+        eta, tau, p = config["initial_conv"]["eta"], config["initial_conv"]["tau"], config["initial_conv"]["p"]
+        self.initial_conv = BNConvTriangle(in_channels, n_channels, kernel_size=5, eta=eta, temp=tau, p=p)
 
-        if n_cells >= 1:
-            cell_1 = HebbCellA(in_channels, n_channels, config["cell_1"])
-            self.cells.append(cell_1)
-        if n_cells >= 2:
-            # TODO: What is the exact number of input channels?
-            cell_2 = HebbCellA(4 * n_channels, 4 * n_channels, config["cell_2"])
-            self.cells.append(cell_2)
-        if n_cells >= 3:
-            # TODO: What is the exact number of input channels?
-            cell_3 = HebbCellA(4 ** 2 * n_channels, 4 ** 2 * n_channels, config["cell_3"])
-            self.cells.append(cell_3)
-        # TODO: What is the exact number of output channels?
-        self.out_channels = 4 ** 3 * n_channels
+        # First reduction cell.
+        skip_channels = in_channels
+        in_channels = n_channels
+        out_channels = 4 * n_channels
+        self.cell_1 = HebbCellA(skip_channels, in_channels, out_channels, config["cell_1"])
+
+        # Second reduction cell.
+        skip_channels = n_channels
+        in_channels = self.cell_1.out_channels
+        out_channels = (4 ** 2) * n_channels
+        self.cell_2 = HebbCellA(skip_channels, in_channels, out_channels, config["cell_2"], follows_reduction=True)
+        self.out_channels = self.cell_2.out_channels
+
+        self.pool = AvgPool2d(kernel_size=2, stride=2)
 
     @torch.no_grad()
     def forward(self, x: Tensor):
@@ -59,23 +68,81 @@ class HebbNetA(Module):
         :return: The feature encoding.
         """
 
-        # Run input through the cells.
         x_skip = x
-        for cell in self.cells:
-            x_next = cell(x_skip, x)
-            x_skip = x
-            x = x_next
+
+        # Apply initial convolution.
+        x = self.initial_conv(x)
+
+        # Run input through the first reduction cell.
+        x_next = self.cell_1(x_skip, x)
+        x_skip = x
+        x = x_next
+
+        # Run input through the second reduction cell.
+        x = self.cell_2(x_skip, x)
+
+        # Apply pooling.
+        x = self.pool(x)
+
+        return x
 
 
 class HebbCellA(Module):
     """The evolved reduction cell for HebbNet-A."""
 
-    def __init__(self, in_channels: int, n_channels: int, config: dict):
+    def __init__(self, skip_channels: int, in_channels: int, n_channels: int, config: dict, follows_reduction=False):
         super(HebbCellA, self).__init__()
 
-        eta, tau, p = config['conv_1']["eta"], config['conv_1']["tau"], config['conv_1']["p"]
+        if follows_reduction:
+            eta, tau, p = config["pre_skip"]["eta"], config["pre_skip"]["tau"], config["pre_skip"]["p"]
+            self.preprocess_skip = BNConvTriangle(skip_channels, n_channels, kernel_size=3, stride=2, eta=eta, temp=tau,
+                                                  p=p)
+        else:
+            eta, tau, p = config["pre_skip"]["eta"], config["pre_skip"]["tau"], config["pre_skip"]["p"]
+            self.preprocess_skip = BNConvTriangle(skip_channels, n_channels, kernel_size=3, eta=eta, temp=tau, p=p)
 
-        self.convs = ModuleList
+        self.skip_pool = MaxPool2d(kernel_size=3, stride=2, padding=1)
+        self.x_pool = MaxPool2d(kernel_size=3, stride=2, padding=1)
+
+        eta, tau, p = config["conv_skip"]["eta"], config["conv_skip"]["tau"], config["conv_skip"]["p"]
+        self.conv_skip = BNConvTriangle(n_channels, n_channels, kernel_size=1, stride=2, eta=eta, temp=tau, p=p)
+
+        eta, tau, p = config["conv_1_add"]["eta"], config["conv_1_add"]["tau"], config["conv_1_add"]["p"]
+        self.conv_1_add = BNConvTriangle(in_channels, n_channels, kernel_size=1, eta=eta, temp=tau, p=p)
+
+        eta, tau, p = config["conv_1_cat"]["eta"], config["conv_1_cat"]["tau"], config["conv_1_cat"]["p"]
+        self.conv_1_cat = BNConvTriangle(in_channels, n_channels, kernel_size=1, eta=eta, temp=tau, p=p)
+
+        eta, tau, p = config["dil_conv_5"]["eta"], config["dil_conv_5"]["tau"], config["dil_conv_5"]["p"]
+        self.dil_conv_5 = BNConvTriangle(in_channels, n_channels, kernel_size=3, dilation=2, eta=eta, temp=tau, p=p)
+
+        self.out_channels = 4 * n_channels
+
+    @torch.no_grad()
+    def forward(self, x_skip: Tensor, x: Tensor):
+        """Forward pass.
+
+        :param x_skip: Skip input.
+        :param x: Direct input.
+        :return: The cell output.
+        """
+
+        # Process skip input.
+        x_skip = self.preprocess_skip(x_skip)
+        skip_pool = self.skip_pool(x_skip)
+        x_skip = self.conv_skip(x_skip)
+
+        # Process direct input.
+        x = self.x_pool(x)
+        x_1_add = self.conv_1_add(x)
+        x_1_cat = self.conv_1_cat(x)
+        x_dil_5 = self.dil_conv_5(x)
+
+        # Add convolved skip input and pooled-convolved direct input.
+        x_add = torch.add(x_skip, x_1_add)
+
+        # Concatenate all unused intermediate tensors.
+        return torch.cat([skip_pool, x_add, x_1_cat, x_dil_5], dim=-3)
 
 
 class HebbNet(Module):
@@ -134,14 +201,14 @@ class HebbianEncoder(Module):
         super(HebbianEncoder, self).__init__()
 
         out_channels = n_channels
-        self.conv_1 = BNConvTriangle(in_channels, out_channels, kernel_size=1, eta=eta)
-        self.conv_3 = BNConvTriangle(in_channels, out_channels, kernel_size=3, eta=eta)
-        self.conv_5 = BNConvTriangle(in_channels, out_channels, kernel_size=5, eta=eta)
-        self.max_pool = Sequential(MaxPool2d(kernel_size=3, stride=1, padding=1),
-                                   BNConvTriangle(in_channels, out_channels, kernel_size=1, eta=eta))
-        # self.initial_conv = BNConvTriangle(in_channels, out_channels, kernel_size=5, eta=eta)
+        # self.conv_1 = BNConvTriangle(in_channels, out_channels, kernel_size=1, eta=eta)
+        # self.conv_3 = BNConvTriangle(in_channels, out_channels, kernel_size=3, eta=eta)
+        # self.conv_5 = BNConvTriangle(in_channels, out_channels, kernel_size=5, eta=eta)
+        # self.max_pool = MaxPool2d(kernel_size=3, stride=1, padding=1)
+        self.initial_conv = BNConvTriangle(in_channels, out_channels, kernel_size=5, eta=eta)
         skip_channels = in_channels  # The next skip input is the current input.
-        in_channels = 4 * out_channels  # The next direct input is the current output.
+        # in_channels = 3 * out_channels + in_channels  # The next direct input is the current output.
+        in_channels = out_channels
         out_channels *= scaling_factor  # Scale the number of filters.
 
         reduction_cell = architecture.reduction_cell
@@ -227,12 +294,12 @@ class HebbianEncoder(Module):
         x_skip = x
 
         # Apply initial convolution.
-        # x = self.initial_conv(x)
-        x_1 = self.conv_1(x)
-        x_3 = self.conv_3(x)
-        x_5 = self.conv_5(x)
-        x_max = self.max_pool(x)
-        x = torch.cat([x_1, x_3, x_5, x_max], dim=-3)
+        x = self.initial_conv(x)
+        # x_1 = self.conv_1(x)
+        # x_3 = self.conv_3(x)
+        # x_5 = self.conv_5(x)
+        # x_max = self.max_pool(x)
+        # x = torch.cat([x_1, x_3, x_5, x_max], dim=-3)
 
         # Run input through the cells.
         for cell in self.cells:
@@ -450,13 +517,14 @@ class Classifier(Module):
 
     :param in_features: The number of input features.
     :param out_features: The number of output features.
+    :param dropout: The dropout rate (default: 0.5).
     """
 
-    def __init__(self, in_features: int, out_features: int):
+    def __init__(self, in_features: int, out_features: int, dropout=0.5):
         super(Classifier, self).__init__()
 
         self.flatten = Flatten(start_dim=-3, end_dim=-1)
-        self.dropout = Dropout()
+        self.dropout = Dropout(dropout)
         self.linear = Linear(in_features, out_features)
 
     def forward(self, x: Tensor):
@@ -481,20 +549,45 @@ class NoSkipNetA(Module):
 class SoftHebbNet(Module):
     """The small SoftHebb encoder network for CIFAR-10.
 
-    Includes tuned hyperparameter settings.
+    :param n_channels: The amount of initial channels (default: 96).
+    :param config: Hyperparameter configuration, either 'default' (no tuning), 'original' (original tuning),
+        'tuned' (from random search), or a dictionary with custom settings.
     """
 
-    def __init__(self):
+    def __init__(self, n_channels: int = 96, config: str | dict = "tuned"):
         super(SoftHebbNet, self).__init__()
 
-        self.layer_1 = BNConvTriangle(in_channels=3, out_channels=96, kernel_size=5, eta=0.08, temp=1, p=0.7)
+        if config == "default":
+            default_config = {"eta": 0.01, "temp": 1, "p": None}
+            config = {"conv_1": default_config, "conv_2": default_config, "conv_3": default_config}
+        elif config == "original":
+            config = {"conv_1": {"eta": 0.08, "temp": 1, "p": 0.7},
+                      "conv_2": {"eta": 0.005, "temp": 1 / 0.65, "p": 1.4},
+                      "conv_3": {"eta": 0.01, "temp": 1 / 0.25, "p": None}}
+        elif config == "tuned":
+            config = {"conv_1": {"eta": 0.08, "temp": 1, "p": 0.7},
+                      "conv_2": {"eta": 0.005, "temp": 1 / 0.65, "p": 1.4},
+                      "conv_3": {"eta": 0.01, "temp": 1 / 0.25, "p": None}}
+
+        c = n_channels
+        params = config["conv_1"]
+        eta, temp, p = params["eta"], params["temp"], params["p"]
+        self.layer_1 = BNConvTriangle(in_channels=3, out_channels=c, kernel_size=5, eta=eta, temp=temp, p=p)
         self.pool_1 = MaxPool2d(kernel_size=4, stride=2, padding=1)
-        self.layer_2 = BNConvTriangle(in_channels=96, out_channels=384, kernel_size=3, eta=0.005, temp=1 / 0.65, p=1.4)
+
+        params = config["conv_2"]
+        eta, temp, p = params["eta"], params["temp"], params["p"]
+        self.layer_2 = BNConvTriangle(in_channels=c, out_channels=4 * c, kernel_size=3, eta=eta, temp=temp, p=p)
         self.pool_2 = MaxPool2d(kernel_size=4, stride=2, padding=1)
-        self.layer_3 = BNConvTriangle(in_channels=384, out_channels=1536, kernel_size=3, eta=0.01, temp=1 / 0.25)
+
+        c *= 4
+        params = config["conv_3"]
+        eta, temp, p = params["eta"], params["temp"], params["p"]
+        self.layer_3 = BNConvTriangle(in_channels=c, out_channels=4 * c, kernel_size=3, eta=eta, temp=temp, p=p)
         self.pool_3 = AvgPool2d(kernel_size=2, stride=2)
 
-        self.out_channels = 1536
+        c *= 4
+        self.out_channels = c
 
     @torch.no_grad()
     def forward(self, x: Tensor):

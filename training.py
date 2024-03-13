@@ -24,7 +24,7 @@ from models import Classifier, HebbNet, SoftHebbNet
 
 
 def train(encoder: Module, classifier: Module, data: Dataset, n_epochs: int, encoder_batch: int, classifier_batch: int,
-          n_workers=0, verbose=False, validation_data=None, val_batch=64, checkpoint: dict | None = None):
+          alpha=1e-3, n_workers=0, verbose=False, validation_data=None, val_batch=64, checkpoint: dict | None = None):
     """Train an encoder network and final classifier sequentially.
 
     Both training processes utilize automatic mixed precision in combination with gradient scaling.
@@ -35,6 +35,7 @@ def train(encoder: Module, classifier: Module, data: Dataset, n_epochs: int, enc
     :param n_epochs: The number of epochs for supervised training of the classifier.
     :param encoder_batch: The batch size for Hebbian training of the encoder network.
     :param classifier_batch: The batch size for supervised training of the classifier.
+    :param alpha: The learning rate for training the classifier.
     :param n_workers: The number of workers (default: 0, i.e., run in the main process).
     :param verbose: True if progress should be printed (default: False).
     :param validation_data: Validation data used for testing, only used if ``verbose`` is ``True`` (default: None).
@@ -60,8 +61,8 @@ def train(encoder: Module, classifier: Module, data: Dataset, n_epochs: int, enc
     # Train classifier.
     if verbose:
         print("Training classifier...")
-    train_classifier(encoder, classifier, data, n_epochs, classifier_batch, device, n_workers, verbose, validation_data,
-                     val_batch, checkpoint)
+    train_classifier(encoder, classifier, data, n_epochs, classifier_batch, device, alpha, n_workers, verbose,
+                     validation_data, val_batch, checkpoint)
     if verbose:
         print(f"Done! Elapsed time: {str(timedelta(seconds=time() - start_time)).split('.', 2)[0]}")
 
@@ -93,7 +94,8 @@ def train_encoder(encoder: Module, data: Dataset, batch_size: int, device: str, 
 
 
 def train_classifier(encoder: Module, classifier: Module, data: Dataset, n_epochs: int, batch_size: int, device: str,
-                     n_workers=0, verbose=True, validation_data=None, val_batch=64, checkpoint: dict | None = None):
+                     alpha=1e-3, n_workers=0, verbose=True, validation_data=None, val_batch=64,
+                     checkpoint: dict | None = None):
     """Train the classifier using supervised learning.
 
     :param encoder: The Hebbian encoder network.
@@ -102,6 +104,7 @@ def train_classifier(encoder: Module, classifier: Module, data: Dataset, n_epoch
     :param n_epochs: The number of epochs for training.
     :param batch_size: The batch size.
     :param device: The device used for PyTorch operations.
+    :param alpha: The learning rate used for Adam.
     :param n_workers: The number of workers (default: 0, i.e., run in the main process).
     :param verbose: True if progress should be printed (default: False).
     :param validation_data: Validation data used for testing, only used if ``verbose`` is ``True`` (default: None).
@@ -119,7 +122,7 @@ def train_classifier(encoder: Module, classifier: Module, data: Dataset, n_epoch
 
     # Set up learning rate scheduler.
     if checkpoint is None:
-        optimizer = Adam(classifier.parameters())
+        optimizer = Adam(classifier.parameters(), lr=alpha)
         scheduler = CosineAnnealingLR(optimizer, T_max=n_epochs)
     else:
         if n_epochs > checkpoint['max_epochs'] - checkpoint['start_epoch']:

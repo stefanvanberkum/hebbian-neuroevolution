@@ -258,18 +258,34 @@ def evolve(dataset='CIFAR10', n_channels=8, scaling_factor=2, n_ops=3, stack_siz
                     f"{accuracies[winner]:.2f}%.", sys.stderr, log_file)
 
         # Remove deceased architectures.
-        n_new = 5 * ((len(P_1) > 0) + (len(P_2) > 0) + (len(P_3) > 0))  # Five new architectures for each non-empty set.
-        for architecture in range(oldest, oldest + n_new):
-            for subpopulation in [P_1, P_2, P_3]:
-                if architecture in subpopulation:
-                    subpopulation.remove(architecture)
-                    remove(join(arch_path, str(architecture), "encoder.pt"))
-                    remove(join(arch_path, str(architecture), "classifier.pt"))
-                    remove(join(arch_path, str(architecture), "training_state.pt"))
+        # n_new = 5 * ((len(P_1) > 0) + (len(P_2) > 0) + (len(P_3) > 0))  # Five new architectures for each non-empty
+        # set.
+        if generation == 9:
+            # Remove the initial random architectures.
+            for architecture in range(0, 60):
+                for subpopulation in [P_1, P_2, P_3]:
+                    if architecture in subpopulation:
+                        subpopulation.remove(architecture)
+                        remove(join(arch_path, str(architecture), "encoder.pt"))
+                        remove(join(arch_path, str(architecture), "classifier.pt"))
+                        remove(join(arch_path, str(architecture), "training_state.pt"))
+            oldest += 60
 
-        if verbose:
-            log(f"[INFO] Deceased architectures: {oldest}--{oldest + n_new}", sys.stderr, log_file)
-        oldest += n_new
+            if verbose:
+                log(f"[INFO] Deceased architectures: {0}--{59}", sys.stderr, log_file)
+        if generation > 9:
+            # Remove the oldest 15 architectures.
+            for architecture in range(oldest, oldest + 15):
+                for subpopulation in [P_1, P_2, P_3]:
+                    if architecture in subpopulation:
+                        subpopulation.remove(architecture)
+                        remove(join(arch_path, str(architecture), "encoder.pt"))
+                        remove(join(arch_path, str(architecture), "classifier.pt"))
+                        remove(join(arch_path, str(architecture), "training_state.pt"))
+
+            if verbose:
+                log(f"[INFO] Deceased architectures: {oldest}--{oldest + 14}", sys.stderr, log_file)
+            oldest += 15
 
         # Save checkpoint.
         ckpt = (rng, P_1, P_2, P_3, P_3_history, accuracies, max_accuracies, generation, step, oldest)
