@@ -25,7 +25,7 @@ from models import Classifier, HebbianEncoder
 from training import test, train
 
 
-def evolve(dataset='CIFAR10', n_channels=8, scaling_factor=2, n_ops=3, stack_size=2, n_reduction=3, n_epochs=10,
+def evolve(dataset='CIFAR10', n_channels=8, scaling_factor=4, n_ops=5, stack_size=0, n_reduction=2, n_epochs=10,
            generations=100, eta=0.01, encoder_batch=32, classifier_batch=256, reduce=False, verbose=False,
            checkpoint=None):
     """Evolve a Hebbian encoder.
@@ -35,10 +35,10 @@ def evolve(dataset='CIFAR10', n_channels=8, scaling_factor=2, n_ops=3, stack_siz
 
     :param dataset: The dataset to use for evolution (default: CIFAR10). One of: {MNIST, CIFAR10}.
     :param n_channels: The initial number of channels (default: 8).
-    :param scaling_factor: The scaling factor for the number of filters after each reduction cell (default: 2).
-    :param n_ops: The number of operations in each cell (default: 3).
-    :param stack_size: The normal cell stack size (default: 2).
-    :param n_reduction: The number of reduction cells, used if ``stack_size`` is set to zero (default: 3).
+    :param scaling_factor: The scaling factor for the number of filters after each reduction cell (default: 4).
+    :param n_ops: The number of operations in each cell (default: 5).
+    :param stack_size: The normal cell stack size (default: 0).
+    :param n_reduction: The number of reduction cells, used if ``stack_size`` is set to zero (default: 2).
     :param n_epochs: The epoch increment for training the classifier (default: 10).
     :param generations: The number of generations (default 100).
     :param eta: The base learning rate used in SoftHebb convolutions (default: 0.01).
@@ -351,11 +351,11 @@ if __name__ == '__main__':
     parser.add_argument('--dataset', type=str, default='CIFAR10', choices=['MNIST', 'CIFAR10'],
                         help="The dataset to use for evolution (default: CIFAR10)")
     parser.add_argument('--n_channels', type=int, default=8, help="The initial number of channels (default: 8).")
-    parser.add_argument('--scaling_factor', type=int, default=2,
-                        help="The scaling factor for the number of filters after each reduction cell (default: 2).")
-    parser.add_argument('--n_ops', type=int, default=3, help="The number of operations in each cell (default: 3).")
-    parser.add_argument('--stack_size', type=int, default=2, help="The normal cell stack size (default: 2).")
-    parser.add_argument('--n_reduction', type=int, default=3,
+    parser.add_argument('--scaling_factor', type=int, default=4,
+                        help="The scaling factor for the number of filters after each reduction cell (default: 4).")
+    parser.add_argument('--n_ops', type=int, default=5, help="The number of operations in each cell (default: 5).")
+    parser.add_argument('--stack_size', type=int, default=0, help="The normal cell stack size (default: 0).")
+    parser.add_argument('--n_reduction', type=int, default=2,
                         help="The number of reduction cells, used if ``stack_size`` is set to zero (default: 3).")
     parser.add_argument('--n_epochs', type=int, default=10, help="The epoch increment for training the classifier ("
                                                                  "default: 10).")

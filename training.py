@@ -5,6 +5,9 @@ Supports command-line use.
 Functions
 =========
 - :func:`train`: Train a model.
+- :func:`train_encoder`: Train a Hebbian encoder.
+- :func:`train_classifier`: Train a classifier.
+- :func:`test`: Test a model.
 """
 
 from argparse import ArgumentParser
@@ -199,7 +202,7 @@ def train_classifier(encoder: Module, classifier: Module, data: Dataset, n_epoch
 
 
 def test(model: Module, data: Dataset, batch_size: int, device: str, n_workers=0):
-    """Test the model.
+    """Test a model.
 
     :param model: The model comprising an encoder and classifier.
     :param data: The test data.

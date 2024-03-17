@@ -5,8 +5,10 @@ https://github.com/y0ast/pytorch-snippets/tree/main/fast_mnist.
 
 Classes
 =======
-- :class:`FastMNIST`:
-- :class:`FastCIFAR`:
+- :class:`FastMNIST`: A fast version of MNIST.
+- :class:`FastCIFAR10`: A fast version of CIFAR-10.
+- :class:`FastCIFAR100`: A fast version of CIFAR-100.
+- :class:`FastSVHN`: A fast version of SVHN.
 
 Functions
 =========

@@ -3,9 +3,17 @@
 Classes
 =======
 - :class:`HebbNet`: Hebbian encoder with final classifier.
-- :class:`HebbianEncoder`: Modular Hebbian encoder network.
+- :class:`HebbianEncoder`: Generic modular Hebbian encoder network used for evolution.
+- :class:`HebbianCell`: Hebbian cell built from a network cell.
 - :class:`Classifier`: Linear classifier module for Hebbian networks.
-- :class:`SoftHebbSmall`: The small SoftHebb encoder network for CIFAR-10.
+- :class:`HebbNetA`: The evolved HebbNet-A encoder.
+- :class:`HebbCellA`: The evolved HebbNet-A reduction cell.
+- :class:`BPNetA`: The backpropagation variant of the evolved HebbNet-A encoder.
+- :class:`BPCellA`: The backpropagation variant of the evolved HebbNet-A reduction cell.
+- :class:`NoSkipNetA`: The evolved HebbNet-A encoder without skip connections.
+- :class:`NoSkipCellA`: The evolved HebbNet-A reduction cell without skip connections.
+- :class:`SoftHebbNet`: The small SoftHebb encoder network for CIFAR-10.
+- :class:`SoftHebbBPNet`: The small backpropagation variant of the SoftHebb network for CIFAR-10.
 """
 import torch
 from networkx import topological_sort
@@ -14,135 +22,6 @@ from torch.nn import AdaptiveAvgPool2d, AvgPool2d, Dropout, Flatten, Linear, Max
 
 from architecture import Architecture, Cell
 from layers import BNConvReLU, BNConvTriangle, Identity, Padding, Zero
-
-
-class HebbNetA(Module):
-    """HebbNet-A."""
-
-    def __init__(self, in_channels: int = 3, config: dict | None = None):
-        super(HebbNetA, self).__init__()
-
-        default_config = {"n_channels": 32, "alpha": 0.001, "dropout": 0.5, "n_epochs": 50,
-                          "initial_conv": {"eta": 0.01, "tau": 1, "p": None},
-                          "cell_1": {"pre_skip": {"eta": 0.01, "tau": 1, "p": None},
-                                     "conv_skip": {"eta": 0.01, "tau": 1, "p": None},
-                                     "conv_1_add": {"eta": 0.01, "tau": 1, "p": None},
-                                     "conv_1_cat": {"eta": 0.01, "tau": 1, "p": None},
-                                     "dil_conv_5": {"eta": 0.01, "tau": 1, "p": None}},
-                          "cell_2": {"pre_skip": {"eta": 0.01, "tau": 1, "p": None},
-                                     "conv_skip": {"eta": 0.01, "tau": 1, "p": None},
-                                     "conv_1_add": {"eta": 0.01, "tau": 1, "p": None},
-                                     "conv_1_cat": {"eta": 0.01, "tau": 1, "p": None},
-                                     "dil_conv_5": {"eta": 0.01, "tau": 1, "p": None}}}
-
-        if config is None:
-            # Set to default hyperparameter settings.
-            config = default_config
-        self.config = config
-
-        # Initial 5x5 convolution.
-        n_channels = int(config["n_channels"])
-        eta, tau, p = config["initial_conv"]["eta"], config["initial_conv"]["tau"], config["initial_conv"]["p"]
-        self.initial_conv = BNConvTriangle(in_channels, n_channels, kernel_size=5, eta=eta, temp=tau, p=p)
-
-        # First reduction cell.
-        skip_channels = in_channels
-        in_channels = n_channels
-        out_channels = 4 * n_channels
-        self.cell_1 = HebbCellA(skip_channels, in_channels, out_channels, config["cell_1"])
-
-        # Second reduction cell.
-        skip_channels = n_channels
-        in_channels = self.cell_1.out_channels
-        out_channels = (4 ** 2) * n_channels
-        self.cell_2 = HebbCellA(skip_channels, in_channels, out_channels, config["cell_2"], follows_reduction=True)
-        self.out_channels = self.cell_2.out_channels
-
-        self.pool = AvgPool2d(kernel_size=2, stride=2)
-
-    @torch.no_grad()
-    def forward(self, x: Tensor):
-        """Forward pass.
-
-        :param x: The input image.
-        :return: The feature encoding.
-        """
-
-        x_skip = x
-
-        # Apply initial convolution.
-        x = self.initial_conv(x)
-
-        # Run input through the first reduction cell.
-        x_next = self.cell_1(x_skip, x)
-        x_skip = x
-        x = x_next
-
-        # Run input through the second reduction cell.
-        x = self.cell_2(x_skip, x)
-
-        # Apply pooling.
-        x = self.pool(x)
-
-        return x
-
-
-class HebbCellA(Module):
-    """The evolved reduction cell for HebbNet-A."""
-
-    def __init__(self, skip_channels: int, in_channels: int, n_channels: int, config: dict, follows_reduction=False):
-        super(HebbCellA, self).__init__()
-
-        if follows_reduction:
-            eta, tau, p = config["pre_skip"]["eta"], config["pre_skip"]["tau"], config["pre_skip"]["p"]
-            self.preprocess_skip = BNConvTriangle(skip_channels, n_channels, kernel_size=3, stride=2, eta=eta, temp=tau,
-                                                  p=p)
-        else:
-            eta, tau, p = config["pre_skip"]["eta"], config["pre_skip"]["tau"], config["pre_skip"]["p"]
-            self.preprocess_skip = BNConvTriangle(skip_channels, n_channels, kernel_size=3, eta=eta, temp=tau, p=p)
-
-        self.skip_pool = MaxPool2d(kernel_size=3, stride=2, padding=1)
-        self.x_pool = MaxPool2d(kernel_size=3, stride=2, padding=1)
-
-        eta, tau, p = config["conv_skip"]["eta"], config["conv_skip"]["tau"], config["conv_skip"]["p"]
-        self.conv_skip = BNConvTriangle(n_channels, n_channels, kernel_size=1, stride=2, eta=eta, temp=tau, p=p)
-
-        eta, tau, p = config["conv_1_add"]["eta"], config["conv_1_add"]["tau"], config["conv_1_add"]["p"]
-        self.conv_1_add = BNConvTriangle(in_channels, n_channels, kernel_size=1, eta=eta, temp=tau, p=p)
-
-        eta, tau, p = config["conv_1_cat"]["eta"], config["conv_1_cat"]["tau"], config["conv_1_cat"]["p"]
-        self.conv_1_cat = BNConvTriangle(in_channels, n_channels, kernel_size=1, eta=eta, temp=tau, p=p)
-
-        eta, tau, p = config["dil_conv_5"]["eta"], config["dil_conv_5"]["tau"], config["dil_conv_5"]["p"]
-        self.dil_conv_5 = BNConvTriangle(in_channels, n_channels, kernel_size=3, dilation=2, eta=eta, temp=tau, p=p)
-
-        self.out_channels = 4 * n_channels
-
-    @torch.no_grad()
-    def forward(self, x_skip: Tensor, x: Tensor):
-        """Forward pass.
-
-        :param x_skip: Skip input.
-        :param x: Direct input.
-        :return: The cell output.
-        """
-
-        # Process skip input.
-        x_skip = self.preprocess_skip(x_skip)
-        skip_pool = self.skip_pool(x_skip)
-        x_skip = self.conv_skip(x_skip)
-
-        # Process direct input.
-        x = self.x_pool(x)
-        x_1_add = self.conv_1_add(x)
-        x_1_cat = self.conv_1_cat(x)
-        x_dil_5 = self.dil_conv_5(x)
-
-        # Add convolved skip input and pooled-convolved direct input.
-        x_add = torch.add(x_skip, x_1_add)
-
-        # Concatenate all unused intermediate tensors.
-        return torch.cat([skip_pool, x_add, x_1_cat, x_dil_5], dim=-3)
 
 
 class HebbNet(Module):
@@ -181,7 +60,7 @@ class HebbNet(Module):
 
 
 class HebbianEncoder(Module):
-    """Modular Hebbian encoder network.
+    """Generic modular Hebbian encoder network used for evolution.
 
     This network is constructed using evolved cells. It has two reduction cells with a stack of normal cells on
     either side (i.e., N-R-N-R-N) followed up by global average pooling if the architecture contains a normal cell.
@@ -201,13 +80,8 @@ class HebbianEncoder(Module):
         super(HebbianEncoder, self).__init__()
 
         out_channels = n_channels
-        # self.conv_1 = BNConvTriangle(in_channels, out_channels, kernel_size=1, eta=eta)
-        # self.conv_3 = BNConvTriangle(in_channels, out_channels, kernel_size=3, eta=eta)
-        # self.conv_5 = BNConvTriangle(in_channels, out_channels, kernel_size=5, eta=eta)
-        # self.max_pool = MaxPool2d(kernel_size=3, stride=1, padding=1)
         self.initial_conv = BNConvTriangle(in_channels, out_channels, kernel_size=5, eta=eta)
         skip_channels = in_channels  # The next skip input is the current input.
-        # in_channels = 3 * out_channels + in_channels  # The next direct input is the current output.
         in_channels = out_channels
         out_channels *= scaling_factor  # Scale the number of filters.
 
@@ -267,8 +141,6 @@ class HebbianEncoder(Module):
             # Global average pooling.
             self.pool = AdaptiveAvgPool2d(output_size=1)
         else:
-            # skip_channels = in_channels
-            # out_channels = n_channels
             for n in range(n_reduction):
                 if n == 0:
                     # First reduction.
@@ -295,11 +167,6 @@ class HebbianEncoder(Module):
 
         # Apply initial convolution.
         x = self.initial_conv(x)
-        # x_1 = self.conv_1(x)
-        # x_3 = self.conv_3(x)
-        # x_5 = self.conv_5(x)
-        # x_max = self.max_pool(x)
-        # x = torch.cat([x_1, x_3, x_5, x_max], dim=-3)
 
         # Run input through the cells.
         for cell in self.cells:
@@ -315,11 +182,12 @@ class HebbianEncoder(Module):
 
 
 class HebbianCell(Module):
-    """Module from a network cell.
+    """Hebbian cell built from a network cell.
 
-    All inputs are preprocessed if necessary using either 1x1 convolutions or a factorized reduction. If this cell
-    follows a reduction cell, the spatial shape of the skip input is reduced using a factorized reduction. If the
-    number of input channels differs from the number of output channels, a 1x1 convolution is applied to remedy this.
+    If this cell follows a reduction cell, the spatial shape of the skip input is reduced using a strided 3x3
+    convolution. Otherwise, if the number of skip input channels differs from the number of output channels,
+    a regular 3x3 convolution is used to preprocess the skip input. Whenever the number of channels between two
+    elements of a pairwise operation is not equal, zero padding is applied to remedy this.
 
     :param cell: The cell.
     :param in_channels: The number of input channels.
@@ -341,34 +209,20 @@ class HebbianCell(Module):
         self.used = [False] * n_nodes  # List that records whether a nodes' output is used.
         self.n_ops = n_nodes - 2
 
-        # TODO: Clean this up.
         # Preprocess inputs if necessary.
         self.preprocess_skip = None
         self.preprocess_x = None
-        # if follows_reduction and skip_channels != out_channels:
         if follows_reduction:
-            # Reduce spatial shape of the skip input using a factorized reduction.
-            # self.preprocess_skip = FactorizedReduction(skip_channels, out_channels, eta)
-            self.preprocess_skip = BNConvTriangle(skip_channels, out_channels, 3, eta,
-                                                  stride=2)  # self.preprocess_skip = MaxPool2d(kernel_size=3,
-            # stride=2, padding=1)
-        # elif follows_reduction:
-        #    self.preprocess_skip = MaxPool2d(kernel_size=3, stride=2, padding=1)
+            # Reduce spatial shape of the skip input using a strided 3x3 convolution.
+            self.preprocess_skip = BNConvTriangle(skip_channels, out_channels, 3, eta, stride=2)
         elif skip_channels != out_channels:
-            # Apply a 1x1 convolution to make the number of channels match.
-            self.preprocess_skip = BNConvTriangle(skip_channels, out_channels, 3,
-                                                  eta)  # self.preprocess_skip = Padding(out_channels - skip_channels)
-        # if in_channels != out_channels:
-        # Apply a 1x1 convolution to make the number of channels match.
-        #    self.preprocess_x = BNConvTriangle(in_channels, out_channels, 3,
-        #                                       eta)  # self.preprocess_x = Padding(out_channels - in_channels)
+            # Apply a 3x3 convolution to make the number of channels match.
+            self.preprocess_skip = BNConvTriangle(skip_channels, out_channels, 3, eta)
 
         # Keep track of the output channels for each node to apply zero padding where necessary.
         node_channels = [0] * n_nodes
-        # node_channels[0] = skip_channels
-        node_channels[1] = in_channels
         node_channels[0] = out_channels
-        # node_channels[1] = out_channels
+        node_channels[1] = in_channels
 
         # Mark input tensors as used (these are never appended to the output).
         self.used[0] = True
@@ -423,10 +277,7 @@ class HebbianCell(Module):
                 self.used[left] = True
                 self.used[right] = True
 
-        # TODO: Clean this up.
         # Store the number of output channels after concatenation of unused intermediate outputs.
-        # n_unused = n_nodes - sum(self.used)
-        # self.out_channels = n_unused * out_channels
         self.out_channels = sum([node_channels[node] for node in range(n_nodes) if not self.used[node]])
 
     @torch.no_grad()
@@ -438,11 +289,9 @@ class HebbianCell(Module):
         :return: Output tensor comprising unused intermediate outputs.
         """
 
-        # Preprocess inputs if necessary.
+        # Preprocess skip input if necessary.
         if self.preprocess_skip is not None:
             x_skip = self.preprocess_skip(x_skip)
-        # if self.preprocess_x is not None:
-        #    x = self.preprocess_x(x)  # TODO: Remove if unused.
 
         # Record intermediate outputs.
         out = [Tensor()] * (self.n_ops + 2)
@@ -542,8 +391,335 @@ class Classifier(Module):
         return x
 
 
+class HebbNetA(Module):
+    """HebbNet-A."""
+
+    def __init__(self, in_channels: int = 3, config: dict | None = None):
+        super(HebbNetA, self).__init__()
+
+        default_config = {"n_channels": 32, "alpha": 0.001, "dropout": 0.5, "n_epochs": 50,
+                          "initial_conv": {"eta": 0.01, "tau_inv": 1, "p": None},
+                          "cell_1": {"pre_skip": {"eta": 0.01, "tau_inv": 1, "p": None},
+                                     "conv_skip": {"eta": 0.01, "tau_inv": 1, "p": None},
+                                     "conv_1_add": {"eta": 0.01, "tau_inv": 1, "p": None},
+                                     "conv_1_cat": {"eta": 0.01, "tau_inv": 1, "p": None},
+                                     "dil_conv_5": {"eta": 0.01, "tau_inv": 1, "p": None}},
+                          "cell_2": {"pre_skip": {"eta": 0.01, "tau_inv": 1, "p": None},
+                                     "conv_skip": {"eta": 0.01, "tau_inv": 1, "p": None},
+                                     "conv_1_add": {"eta": 0.01, "tau_inv": 1, "p": None},
+                                     "conv_1_cat": {"eta": 0.01, "tau_inv": 1, "p": None},
+                                     "dil_conv_5": {"eta": 0.01, "tau_inv": 1, "p": None}}}
+
+        if config is None:
+            # Set to default hyperparameter settings.
+            config = default_config
+        self.config = config
+
+        # Initial 5x5 convolution.
+        n_channels = int(config["n_channels"])
+        eta, tau, p = config["initial_conv"]["eta"], 1 / config["initial_conv"]["tau_inv"], config["initial_conv"]["p"]
+        self.initial_conv = BNConvTriangle(in_channels, n_channels, kernel_size=5, eta=eta, temp=tau, p=p)
+
+        # First reduction cell.
+        skip_channels = in_channels
+        in_channels = n_channels
+        out_channels = 4 * n_channels
+        self.cell_1 = HebbCellA(skip_channels, in_channels, out_channels, config["cell_1"])
+
+        # Second reduction cell.
+        skip_channels = n_channels
+        in_channels = self.cell_1.out_channels
+        out_channels = (4 ** 2) * n_channels
+        self.cell_2 = HebbCellA(skip_channels, in_channels, out_channels, config["cell_2"], follows_reduction=True)
+        self.out_channels = self.cell_2.out_channels
+
+        self.pool = AvgPool2d(kernel_size=2, stride=2)
+
+    @torch.no_grad()
+    def forward(self, x: Tensor):
+        """Forward pass.
+
+        :param x: The input image.
+        :return: The feature encoding.
+        """
+
+        x_skip = x
+
+        # Apply initial convolution.
+        x = self.initial_conv(x)
+
+        # Run input through the first reduction cell.
+        x_next = self.cell_1(x_skip, x)
+        x_skip = x
+        x = x_next
+
+        # Run input through the second reduction cell.
+        x = self.cell_2(x_skip, x)
+
+        # Apply pooling.
+        x = self.pool(x)
+
+        return x
+
+
+class HebbCellA(Module):
+    """The evolved reduction cell for HebbNet-A."""
+
+    def __init__(self, skip_channels: int, in_channels: int, n_channels: int, config: dict, follows_reduction=False):
+        super(HebbCellA, self).__init__()
+
+        if follows_reduction:
+            eta, tau, p = config["pre_skip"]["eta"], 1 / config["pre_skip"]["tau_inv"], config["pre_skip"]["p"]
+            self.preprocess_skip = BNConvTriangle(skip_channels, n_channels, kernel_size=3, stride=2, eta=eta, temp=tau,
+                                                  p=p)
+        else:
+            eta, tau, p = config["pre_skip"]["eta"], 1 / config["pre_skip"]["tau_inv"], config["pre_skip"]["p"]
+            self.preprocess_skip = BNConvTriangle(skip_channels, n_channels, kernel_size=3, eta=eta, temp=tau, p=p)
+
+        self.skip_pool = MaxPool2d(kernel_size=3, stride=2, padding=1)
+        self.x_pool = MaxPool2d(kernel_size=3, stride=2, padding=1)
+
+        eta, tau, p = config["conv_skip"]["eta"], 1 / config["conv_skip"]["tau_inv"], config["conv_skip"]["p"]
+        self.conv_skip = BNConvTriangle(n_channels, n_channels, kernel_size=1, stride=2, eta=eta, temp=tau, p=p)
+
+        eta, tau, p = config["conv_1_add"]["eta"], 1 / config["conv_1_add"]["tau_inv"], config["conv_1_add"]["p"]
+        self.conv_1_add = BNConvTriangle(in_channels, n_channels, kernel_size=1, eta=eta, temp=tau, p=p)
+
+        eta, tau, p = config["conv_1_cat"]["eta"], 1 / config["conv_1_cat"]["tau_inv"], config["conv_1_cat"]["p"]
+        self.conv_1_cat = BNConvTriangle(in_channels, n_channels, kernel_size=1, eta=eta, temp=tau, p=p)
+
+        eta, tau, p = config["dil_conv_5"]["eta"], 1 / config["dil_conv_5"]["tau_inv"], config["dil_conv_5"]["p"]
+        self.dil_conv_5 = BNConvTriangle(in_channels, n_channels, kernel_size=3, dilation=2, eta=eta, temp=tau, p=p)
+
+        self.out_channels = 4 * n_channels
+
+    @torch.no_grad()
+    def forward(self, x_skip: Tensor, x: Tensor):
+        """Forward pass.
+
+        :param x_skip: Skip input.
+        :param x: Direct input.
+        :return: The cell output.
+        """
+
+        # Process skip input.
+        x_skip = self.preprocess_skip(x_skip)
+        skip_pool = self.skip_pool(x_skip)
+        x_skip = self.conv_skip(x_skip)
+
+        # Process direct input.
+        x = self.x_pool(x)
+        x_1_add = self.conv_1_add(x)
+        x_1_cat = self.conv_1_cat(x)
+        x_dil_5 = self.dil_conv_5(x)
+
+        # Add convolved skip input and pooled-convolved direct input.
+        x_add = torch.add(x_skip, x_1_add)
+
+        # Concatenate all unused intermediate tensors.
+        return torch.cat([skip_pool, x_add, x_1_cat, x_dil_5], dim=-3)
+
+
+class BPNetA(Module):
+    """The backpropagation version of HebbNet-A."""
+
+    def __init__(self, in_channels: int = 3, config: dict | None = None):
+        super(BPNetA, self).__init__()
+
+        # Initial 5x5 convolution.
+        # TODO: Set to correct number of channels.
+        n_channels = 32
+        self.initial_conv = BNConvReLU(in_channels, n_channels, kernel_size=5)
+
+        # First reduction cell.
+        skip_channels = in_channels
+        in_channels = n_channels
+        out_channels = 4 * n_channels
+        self.cell_1 = BPCellA(skip_channels, in_channels, out_channels)
+
+        # Second reduction cell.
+        skip_channels = n_channels
+        in_channels = self.cell_1.out_channels
+        out_channels = (4 ** 2) * n_channels
+        self.cell_2 = BPCellA(skip_channels, in_channels, out_channels, follows_reduction=True)
+        self.out_channels = self.cell_2.out_channels
+
+        self.pool = AvgPool2d(kernel_size=2, stride=2)
+
+    def forward(self, x: Tensor):
+        """Forward pass.
+
+        :param x: The input image.
+        :return: The feature encoding.
+        """
+
+        x_skip = x
+
+        # Apply initial convolution.
+        x = self.initial_conv(x)
+
+        # Run input through the first reduction cell.
+        x_next = self.cell_1(x_skip, x)
+        x_skip = x
+        x = x_next
+
+        # Run input through the second reduction cell.
+        x = self.cell_2(x_skip, x)
+
+        # Apply pooling.
+        x = self.pool(x)
+
+        return x
+
+
+class BPCellA(Module):
+    """The backpropagation variant of the evolved reduction cell for HebbNet-A."""
+
+    def __init__(self, skip_channels: int, in_channels: int, n_channels: int, follows_reduction=False):
+        super(BPCellA, self).__init__()
+
+        if follows_reduction:
+            self.preprocess_skip = BNConvReLU(skip_channels, n_channels, kernel_size=3, stride=2)
+        else:
+            self.preprocess_skip = BNConvReLU(skip_channels, n_channels, kernel_size=3)
+
+        self.skip_pool = MaxPool2d(kernel_size=3, stride=2, padding=1)
+        self.x_pool = MaxPool2d(kernel_size=3, stride=2, padding=1)
+
+        self.conv_skip = BNConvReLU(n_channels, n_channels, kernel_size=1, stride=2)
+        self.conv_1_add = BNConvReLU(in_channels, n_channels, kernel_size=1)
+        self.conv_1_cat = BNConvReLU(in_channels, n_channels, kernel_size=1)
+        self.dil_conv_5 = BNConvReLU(in_channels, n_channels, kernel_size=3, dilation=2)
+
+        self.out_channels = 4 * n_channels
+
+    def forward(self, x_skip: Tensor, x: Tensor):
+        """Forward pass.
+
+        :param x_skip: Skip input.
+        :param x: Direct input.
+        :return: The cell output.
+        """
+
+        # Process skip input.
+        x_skip = self.preprocess_skip(x_skip)
+        skip_pool = self.skip_pool(x_skip)
+        x_skip = self.conv_skip(x_skip)
+
+        # Process direct input.
+        x = self.x_pool(x)
+        x_1_add = self.conv_1_add(x)
+        x_1_cat = self.conv_1_cat(x)
+        x_dil_5 = self.dil_conv_5(x)
+
+        # Add convolved skip input and pooled-convolved direct input.
+        x_add = torch.add(x_skip, x_1_add)
+
+        # Concatenate all unused intermediate tensors.
+        return torch.cat([skip_pool, x_add, x_1_cat, x_dil_5], dim=-3)
+
+
 class NoSkipNetA(Module):
     """HebbNet-A without skip connections."""
+
+    def __init__(self, in_channels: int = 3, config: dict | None = None):
+        super(NoSkipNetA, self).__init__()
+
+        # TODO: Add default hyperparameters.
+        default_config = {"n_channels": 32, "alpha": 0.001, "dropout": 0.5, "n_epochs": 50,
+                          "initial_conv": {"eta": 0.01, "tau_inv": 1, "p": None},
+                          "cell_1": {"pre_skip": {"eta": 0.01, "tau_inv": 1, "p": None},
+                                     "conv_skip": {"eta": 0.01, "tau_inv": 1, "p": None},
+                                     "conv_1_add": {"eta": 0.01, "tau_inv": 1, "p": None},
+                                     "conv_1_cat": {"eta": 0.01, "tau_inv": 1, "p": None},
+                                     "dil_conv_5": {"eta": 0.01, "tau_inv": 1, "p": None}},
+                          "cell_2": {"pre_skip": {"eta": 0.01, "tau_inv": 1, "p": None},
+                                     "conv_skip": {"eta": 0.01, "tau_inv": 1, "p": None},
+                                     "conv_1_add": {"eta": 0.01, "tau_inv": 1, "p": None},
+                                     "conv_1_cat": {"eta": 0.01, "tau_inv": 1, "p": None},
+                                     "dil_conv_5": {"eta": 0.01, "tau_inv": 1, "p": None}}}
+
+        if config is None:
+            # Set to default hyperparameter settings.
+            config = default_config
+        self.config = config
+
+        # Initial 5x5 convolution.
+        n_channels = int(config["n_channels"])
+        eta, tau, p = config["initial_conv"]["eta"], 1 / config["initial_conv"]["tau_inv"], config["initial_conv"]["p"]
+        self.initial_conv = BNConvTriangle(in_channels, n_channels, kernel_size=5, eta=eta, temp=tau, p=p)
+
+        # First reduction cell.
+        in_channels = n_channels
+        out_channels = 4 * n_channels
+        self.cell_1 = NoSkipCellA(in_channels, out_channels, config["cell_1"])
+
+        # Second reduction cell.
+        in_channels = self.cell_1.out_channels
+        out_channels = (4 ** 2) * n_channels
+        self.cell_2 = NoSkipCellA(in_channels, out_channels, config["cell_2"], follows_reduction=True)
+        self.out_channels = self.cell_2.out_channels
+
+        self.pool = AvgPool2d(kernel_size=2, stride=2)
+
+    @torch.no_grad()
+    def forward(self, x: Tensor):
+        """Forward pass.
+
+        :param x: The input image.
+        :return: The feature encoding.
+        """
+
+        # Apply initial convolution.
+        x = self.initial_conv(x)
+
+        # Run input through the first reduction cell.
+        x = self.cell_1(x)
+
+        # Run input through the second reduction cell.
+        x = self.cell_2(x)
+
+        # Apply pooling.
+        x = self.pool(x)
+
+        return x
+
+
+class NoSkipCellA(Module):
+    """The evolved reduction cell for HebbNet-A without skip connections."""
+
+    def __init__(self, in_channels: int, n_channels: int, config: dict, follows_reduction=False):
+        super(NoSkipCellA, self).__init__()
+
+        self.x_pool = MaxPool2d(kernel_size=3, stride=2, padding=1)
+
+        eta, tau, p = config["conv_1_add"]["eta"], 1 / config["conv_1_add"]["tau_inv"], config["conv_1_add"]["p"]
+        self.conv_1_add = BNConvTriangle(in_channels, n_channels, kernel_size=1, eta=eta, temp=tau, p=p)
+
+        eta, tau, p = config["conv_1_cat"]["eta"], 1 / config["conv_1_cat"]["tau_inv"], config["conv_1_cat"]["p"]
+        self.conv_1_cat = BNConvTriangle(in_channels, n_channels, kernel_size=1, eta=eta, temp=tau, p=p)
+
+        eta, tau, p = config["dil_conv_5"]["eta"], 1 / config["dil_conv_5"]["tau_inv"], config["dil_conv_5"]["p"]
+        self.dil_conv_5 = BNConvTriangle(in_channels, n_channels, kernel_size=3, dilation=2, eta=eta, temp=tau, p=p)
+
+        self.out_channels = 4 * n_channels
+
+    @torch.no_grad()
+    def forward(self, x: Tensor):
+        """Forward pass.
+
+        :param x: Direct input.
+        :return: The cell output.
+        """
+
+        # Process direct input.
+        x = self.x_pool(x)
+        x_1_add = self.conv_1_add(x)
+        x_1_cat = self.conv_1_cat(x)
+        x_dil_5 = self.dil_conv_5(x)
+
+        # Concatenate all unused intermediate tensors.
+        return torch.cat([x_1_add, x_1_cat, x_dil_5], dim=-3)
 
 
 class SoftHebbNet(Module):
@@ -609,7 +785,7 @@ class SoftHebbNet(Module):
 
 
 class SoftHebbBPNet(Module):
-    """The small backpropagation SoftHebb network for CIFAR-10."""
+    """The small backpropagation variant of the SoftHebb network for CIFAR-10."""
 
     def __init__(self):
         super(SoftHebbBPNet, self).__init__()
@@ -625,7 +801,6 @@ class SoftHebbBPNet(Module):
         self.dropout = Dropout()
         self.linear = Linear(1536 * (32 // 2 ** 3) ** 2, 10)
 
-    @torch.no_grad()
     def forward(self, x: Tensor):
         """Forward pass.
 
@@ -646,13 +821,3 @@ class SoftHebbBPNet(Module):
         x = self.dropout(x)
         x = self.linear(x)
         return x
-
-
-class BPNetA(Module):
-    """Backpropagation variant of HebbNet-A for CIFAR-10."""
-
-    def __init__(self, in_channels: int = 3, n_cells: int = 3, n_channels: int = 64):
-        super(BPNetA, self).__init__()
-
-        # TODO: Adapt HebbNetA code to BP.
-        self.conv = BNConvReLU(in_channels, n_channels, 3)

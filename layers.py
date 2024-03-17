@@ -6,7 +6,9 @@ Classes
 - :class:`HebbConv2d`: Hebbian convolution.
 - :class:`Zero`: Module that zeroes out the input.
 - :class:`Identity`: Module that applies an identity operation.
-TODO: Add others.
+- :class:`FactorizedReduction`: Module that reduces the dimensionality with less information loss.
+- :class:`Padding`: Module that applies zero padding to the input tensor along the channel dimension.
+- :class:`BNConvReLU`: Combination of batch normalization, a regular convolution, and a ReLU.
 """
 
 import math
@@ -288,6 +290,8 @@ class FactorizedReduction(Module):
     It applies two 1x1 convolutions with stride 2 and concatenates the result along the channel dimension. By taking
     half of the desired number of filters for each convolution, the concatenated result has the right shape. This
     method is based on the papers and corresponding code by [1]_ and [2]_.
+
+    Not used in this implementation.
 
     References
     ==========

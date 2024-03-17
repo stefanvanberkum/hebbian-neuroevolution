@@ -1,4 +1,17 @@
-"""This module provides methods for running the experiments after evolution."""
+"""This module provides methods for running the experiments after evolution.
+
+Supports command-line use.
+
+Functions
+=========
+- :func:`evaluate`: Perform a classical single train-test split evaluation.
+- :func:`train_bp`: Train an encoder network using backpropagation.
+- :func:`test`: Test a model.
+- :func:`summarize`: Summarize the classical evaluation results.
+- :func:`visualize`: Visualize the function of multiple neural pathways.
+- :func:`bayesian_analysis`: Run a Bayesian analysis to estimate the effect size.
+"""
+
 import pickle
 import statistics
 import sys
@@ -6,14 +19,12 @@ from argparse import ArgumentParser, BooleanOptionalAction
 from os import makedirs
 from os.path import exists, join
 
-import cv2
 import matplotlib.pyplot as plt
 import numpy as np
 import scipy
+import seaborn as sns
 import torch
 from baycomp import CorrelatedTTest
-from pytorch_grad_cam import LayerCAM
-from pytorch_grad_cam.utils.image import show_cam_on_image
 from seaborn import lineplot
 from sklearn.model_selection import StratifiedKFold
 from torch import autocast
@@ -25,6 +36,7 @@ from torch.utils.data import ConcatDataset, DataLoader, Dataset, Subset
 from tqdm import tqdm
 
 from dataloader import load
+from layercam import LayerCAM
 from models import BPNetA, Classifier, HebbNet, HebbNetA, NoSkipNetA, SoftHebbBPNet, SoftHebbNet
 from training import train
 
@@ -55,14 +67,16 @@ def evaluate(model: str, mode: str, dataset: str):
             elif model == "SoftHebb" and mode == "BP":
                 encoder = SoftHebbBPNet()  # Includes classifier.
             elif model == "NoSkip" and mode == "Hebbian":
-                enoder = NoSkipNetA()
+                encoder = NoSkipNetA()
             else:
                 raise ValueError(f"The {mode} {model} model not found.")
             if mode == "Hebbian":
-                classifier = Classifier(encoder.out_channels * (32 // 2 ** 3) ** 2, 10)
-                model = train(encoder, classifier, train_data, 50, 10, 64, verbose=True)
+                classifier = Classifier(encoder.out_channels * (32 // 2 ** 3) ** 2, 10,
+                                        dropout=encoder.config["dropout"])
+                model = train(encoder, classifier, train_data, int(encoder.config["n_epochs"]), 10, 64,
+                              alpha=encoder.config["alpha"], verbose=True)
             else:
-                model = train_bp(encoder, train_data, 50, 64, device)
+                model = train_bp(encoder, train_data, int(encoder.config["n_epochs"]), 64, device)
             accuracy, is_correct = test(model, test_data, 256, device)
             accuracies.append(accuracy)
             correct += is_correct
@@ -141,7 +155,7 @@ def train_bp(model: Module, data: Dataset, n_epochs: int, batch_size: int, devic
 
 
 def test(model: Module, data: Dataset, batch_size: int, device: str, n_workers=0):
-    """Test the model.
+    """Test a model.
 
     :param model: The model comprising an encoder and classifier.
     :param data: The test data.
@@ -169,7 +183,7 @@ def test(model: Module, data: Dataset, batch_size: int, device: str, n_workers=0
 
 
 def summarize():
-    """Summarize all results.
+    """Summarize the classical evaluation results.
 
     This function computes and reports the mean and standard deviation for each model on each dataset.
     """
@@ -190,11 +204,12 @@ def visualize():
 
     This method takes five samples with the best improvement ratio between HebbNet-A and the original SoftHebb network
     and generates the layer-wise class activation mapping (CAM) for that sample. For this purpose, a model is trained
-    and the samples are only considered if that model gets them right as well.
+    and the samples are only considered if that model gets them right as well. In addition, the CAMs are visualized
+    for each layer in the original SoftHebb network.
     """
 
     for dataset in ['CIFAR10', 'CIFAR100', 'SVHN']:
-        print(f"Visualizing model for {dataset}...")
+        print(f"Visualizing HebbNet-A for {dataset}...")
         makedirs(f"results/raw", exist_ok=True)
         makedirs(f"results/visualization/{dataset}", exist_ok=True)
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -204,7 +219,7 @@ def visualize():
         data = next(iter(test_loader))
 
         encoder = HebbNetA()
-        classifier = Classifier(encoder.out_channels * (32 // 2 ** 3) ** 2, 10)
+        classifier = Classifier(encoder.out_channels * (32 // 2 ** 3) ** 2, 10, dropout=encoder.config["dropout"])
         if exists(f"results/raw/visualization_encoder_{dataset}.pt"):
             # Load checkpoint.
             encoder_state = torch.load(f"results/raw/visualization_encoder_{dataset}.pt")
@@ -215,7 +230,8 @@ def visualize():
             is_correct = pickle.load(open(f"results/raw/correct_{dataset}.pkl", 'rb'))
         else:
             # Train model.
-            model = train(encoder, classifier, train_data, 50, 10, 64, verbose=True)
+            model = train(encoder, classifier, train_data, int(encoder.config["n_epochs"]), 10, 64,
+                          alpha=encoder.config["alpha"], verbose=True)
             _, is_correct = test(model, test_data, 256, device)
             torch.save(encoder.state_dict(), f"results/raw/visualization_encoder_{dataset}.pt")
             torch.save(classifier.state_dict(), f"results/raw/visualization_classifier_{dataset}.pt")
@@ -230,20 +246,53 @@ def visualize():
         samples = samples[-5:]  # Get the five samples with the best improvement ratio, provided they are correct now.
 
         for i in range(5):
-            path = f"results/visualization/{dataset}/{i}"
-            makedirs(path)
+            path = f"results/visualization/{dataset}/{i}/HebbNet"
+            makedirs(path, exist_ok=True)
             sample = data[samples[i]]
-            # TODO: Just make custom loops over cells and convs.
-            for j in range(len(encoder.cells)):
-                cell = encoder.cells[j]
-                for k in range(len(cell.convs)):
-                    conv = cell.convs[k]
+
+            with LayerCAM(model, model.initial_conv) as cam:
+                filename = "initial_conv.png"
+                filepath = join(path, filename)
+                cam.visualize(sample[0], sample[1], filepath)
+
+            cells = [encoder.cell_1, encoder.cell_2]
+            for cell in cells:
+                convs = [cell.preprocess_skip, cell.conv_skip, cell.conv_1_add, cell.conv_1_cat, cell.dil_conv_5]
+                for conv in convs:
                     with LayerCAM(model, conv) as cam:
-                        grayscale_cam = cam(sample[0], sample[1])[0, :]
-                        visualization = show_cam_on_image(sample[0], grayscale_cam, use_rgb=True)
-                    visualization = cv2.cvtColor(visualization, cv2.COLOR_RGB2BGR)
-                    filename = f"cell_{j}_{conv.name}.png"
-                    cv2.imwrite(join(path, filename), visualization)
+                        filename = f"{cell.name}_{conv.name}.png"
+                        filepath = join(path, filename)
+                        cam.visualize(sample[0], sample[1], filepath)
+        print("Done!")
+
+        print(f"Visualizing the SoftHebb network for {dataset}...")
+        encoder = SoftHebbNet()
+        classifier = Classifier(encoder.out_channels * (32 // 2 ** 3) ** 2, 10, dropout=encoder.config["dropout"])
+        if exists(f"results/raw/visualization_softhebb_encoder_{dataset}.pt"):
+            # Load checkpoint.
+            encoder_state = torch.load(f"results/raw/visualization_softhebb_encoder_{dataset}.pt")
+            classifier_state = torch.load(f"results/raw/visualization_softhebb_classifier_{dataset}.pt")
+            encoder.load_state_dict(encoder_state)
+            classifier.load_state_dict(classifier_state)
+            model = HebbNet(encoder, classifier)
+        else:
+            # Train model.
+            model = train(encoder, classifier, train_data, int(encoder.config["n_epochs"]), 10, 64,
+                          alpha=encoder.config["alpha"], verbose=True)
+            torch.save(encoder.state_dict(), f"results/raw/visualization_softhebb_encoder_{dataset}.pt")
+            torch.save(classifier.state_dict(), f"results/raw/visualization_softhebb_classifier_{dataset}.pt")
+
+        for i in range(5):
+            path = f"results/visualization/{dataset}/{i}/SoftHebb"
+            makedirs(path, exist_ok=True)
+            sample = data[samples[i]]
+
+            convs = [encoder.layer_1, encoder.layer_2, encoder.layer_3]
+            for conv in convs:
+                with LayerCAM(model, conv) as cam:
+                    filename = f"{conv.name}.png"
+                    filepath = join(path, filename)
+                    cam.visualize(sample[0], sample[1], filepath)
         print("Done!")
 
 
@@ -288,15 +337,19 @@ def bayesian_analysis():
 
                     # Train and evaluate HebbNet-A.
                     encoder = HebbNetA()
-                    classifier = Classifier(encoder.out_channels * (32 // 2 ** 3) ** 2, 10)
-                    model = train(encoder, classifier, train_data, 50, 10, 64, verbose=True)
+                    classifier = Classifier(encoder.out_channels * (32 // 2 ** 3) ** 2, 10,
+                                            dropout=encoder.config["dropout"])
+                    model = train(encoder, classifier, train_data, int(encoder.config["n_epochs"]), 10, 64,
+                                  alpha=encoder.config["alpha"], verbose=True)
                     hebbnet_accuracy, _ = test(model, test_data, 256, device)
                     hebbnet_accuracies.append(hebbnet_accuracy)
 
                     # Train and evaluate the original SoftHebb network.
                     encoder = SoftHebbNet()
-                    classifier = Classifier(encoder.out_channels * (32 // 2 ** 3) ** 2, 10)
-                    model = train(encoder, classifier, train_data, 50, 10, 64, verbose=True)
+                    classifier = Classifier(encoder.out_channels * (32 // 2 ** 3) ** 2, 10,
+                                            dropout=encoder.config["dropout"])
+                    model = train(encoder, classifier, train_data, int(encoder.config["n_epochs"]), 10, 64,
+                                  alpha=encoder.config["alpha"], verbose=True)
                     softhebb_accuracy, _ = test(model, test_data, 256, device)
                     softhebb_accuracies.append(softhebb_accuracy)
 
@@ -315,7 +368,7 @@ def bayesian_analysis():
                 out.write(f"{levels[i]},{low[i]},{high[i]}\n")
 
         # Plot posterior (default).
-        _ = posterior.plot()
+        _ = posterior.plot(hebbnet_accuracies, softhebb_accuracies)
         plt.savefig(f"results/posterior_{dataset}_default.png")
 
         # Plot posterior (custom).
@@ -328,7 +381,7 @@ def bayesian_analysis():
         ax.fill_between(x, y, color=ax.lines[0].get_color(), alpha=0.5)
         ax.set_xlabel("Accuracy improvement")
         ax.set_ylabel("Density")
-        plt.savefig(f"results/posterior_{dataset}.png", dpi=300)
+        plt.savefig(f"results/posterior_{dataset}.png", dpi=400)
         plt.savefig(f"results/posterior_{dataset}.eps")
 
 
