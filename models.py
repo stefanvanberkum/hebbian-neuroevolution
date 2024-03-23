@@ -394,21 +394,33 @@ class Classifier(Module):
 class HebbNetA(Module):
     """HebbNet-A."""
 
-    def __init__(self, in_channels: int = 3, config: dict | None = None):
+    def __init__(self, in_channels: int = 3, config: dict | str = None):
         super(HebbNetA, self).__init__()
 
+        '''old
+        default_config = {'alpha': 0.0015545367218634766, 'cell_1': {
+            'conv_1_add': {'eta': 0.0014621374326182965, 'p': 0.5279574358515048, 'tau_inv': 0.7493232846451466},
+            'conv_1_cat': {'eta': 0.0057947724298832975, 'p': 0.6197822837606278, 'tau_inv': 0.4663922202611077},
+            'conv_skip': {'eta': 0.016248687817828403, 'p': 0.4699925090175727, 'tau_inv': 0.8483446864179627},
+            'dil_conv_5': {'eta': 0.01795636305652353, 'p': 0.7450758463222744, 'tau_inv': 0.5562034341552267},
+            'pre_skip': {'eta': 0.12103105111161451, 'p': 0.6509451041295371, 'tau_inv': 0.9465580871448495}},
+                          'cell_2': {'conv_1_add': {'eta': 0.0006959071335483481, 'p': 0.6907598350734472,
+                                                    'tau_inv': 0.5320086769714982},
+                                     'conv_1_cat': {'eta': 0.0775372926979992, 'p': 1.3132766081881837,
+                                                    'tau_inv': 0.967214850328739},
+                                     'conv_skip': {'eta': 0.37372098972476875, 'p': 1.0095629013963818,
+                                                   'tau_inv': 1.2754427093546286},
+                                     'dil_conv_5': {'eta': 0.01645775130399738, 'p': 1.0918837944761475,
+                                                    'tau_inv': 0.3087400952423616},
+                                     'pre_skip': {'eta': 0.07089172586453575, 'p': 1.5509360312884812,
+                                                  'tau_inv': 0.7425108901803054}}, 'dropout': 0.38135195907343367,
+                          'initial_conv': {'eta': 0.2927753794539101, 'p': 0.5584704070052638,
+                                           'tau_inv': 0.5175752728535201}, 'n_channels': 34.0, 'n_epochs': 42.0}
+        '''
         default_config = {"n_channels": 32, "alpha": 0.001, "dropout": 0.5, "n_epochs": 50,
-                          "initial_conv": {"eta": 0.01, "tau_inv": 1, "p": None},
-                          "cell_1": {"pre_skip": {"eta": 0.01, "tau_inv": 1, "p": None},
-                                     "conv_skip": {"eta": 0.01, "tau_inv": 1, "p": None},
-                                     "conv_1_add": {"eta": 0.01, "tau_inv": 1, "p": None},
-                                     "conv_1_cat": {"eta": 0.01, "tau_inv": 1, "p": None},
-                                     "dil_conv_5": {"eta": 0.01, "tau_inv": 1, "p": None}},
-                          "cell_2": {"pre_skip": {"eta": 0.01, "tau_inv": 1, "p": None},
-                                     "conv_skip": {"eta": 0.01, "tau_inv": 1, "p": None},
-                                     "conv_1_add": {"eta": 0.01, "tau_inv": 1, "p": None},
-                                     "conv_1_cat": {"eta": 0.01, "tau_inv": 1, "p": None},
-                                     "dil_conv_5": {"eta": 0.01, "tau_inv": 1, "p": None}}}
+                          "conv_1": {"eta": 0.01, "tau_inv": 1, "p": None},
+                          "conv_2": {"eta": 0.01, "tau_inv": 1, "p": None},
+                          "conv_3": {"eta": 0.01, "tau_inv": 1, "p": None}}
 
         if config is None:
             # Set to default hyperparameter settings.
@@ -417,20 +429,21 @@ class HebbNetA(Module):
 
         # Initial 5x5 convolution.
         n_channels = int(config["n_channels"])
-        eta, tau, p = config["initial_conv"]["eta"], 1 / config["initial_conv"]["tau_inv"], config["initial_conv"]["p"]
+        eta, tau, p = config["conv_1"]["eta"], 1 / config["conv_1"]["tau_inv"], config["conv_1"]["p"]
         self.initial_conv = BNConvTriangle(in_channels, n_channels, kernel_size=5, eta=eta, temp=tau, p=p)
 
         # First reduction cell.
         skip_channels = in_channels
         in_channels = n_channels
         out_channels = 4 * n_channels
-        self.cell_1 = HebbCellA(skip_channels, in_channels, out_channels, config["cell_1"])
+        self.cell_1 = HebbCellA(skip_channels, in_channels, out_channels, config["conv_1"], config["conv_2"])
 
         # Second reduction cell.
         skip_channels = n_channels
         in_channels = self.cell_1.out_channels
         out_channels = (4 ** 2) * n_channels
-        self.cell_2 = HebbCellA(skip_channels, in_channels, out_channels, config["cell_2"], follows_reduction=True)
+        self.cell_2 = HebbCellA(skip_channels, in_channels, out_channels, config["conv_2"], config["conv_3"],
+                                follows_reduction=True)
         self.out_channels = self.cell_2.out_channels
 
         self.pool = AvgPool2d(kernel_size=2, stride=2)
@@ -465,30 +478,31 @@ class HebbNetA(Module):
 class HebbCellA(Module):
     """The evolved reduction cell for HebbNet-A."""
 
-    def __init__(self, skip_channels: int, in_channels: int, n_channels: int, config: dict, follows_reduction=False):
+    def __init__(self, skip_channels: int, in_channels: int, n_channels: int, skip_config: dict, config: dict,
+                 follows_reduction=False):
         super(HebbCellA, self).__init__()
 
         if follows_reduction:
-            eta, tau, p = config["pre_skip"]["eta"], 1 / config["pre_skip"]["tau_inv"], config["pre_skip"]["p"]
+            eta, tau, p = skip_config["eta"], 1 / skip_config["tau_inv"], skip_config["p"]
             self.preprocess_skip = BNConvTriangle(skip_channels, n_channels, kernel_size=3, stride=2, eta=eta, temp=tau,
                                                   p=p)
         else:
-            eta, tau, p = config["pre_skip"]["eta"], 1 / config["pre_skip"]["tau_inv"], config["pre_skip"]["p"]
+            eta, tau, p = skip_config["eta"], 1 / skip_config["tau_inv"], skip_config["p"]
             self.preprocess_skip = BNConvTriangle(skip_channels, n_channels, kernel_size=3, eta=eta, temp=tau, p=p)
 
         self.skip_pool = MaxPool2d(kernel_size=3, stride=2, padding=1)
         self.x_pool = MaxPool2d(kernel_size=3, stride=2, padding=1)
 
-        eta, tau, p = config["conv_skip"]["eta"], 1 / config["conv_skip"]["tau_inv"], config["conv_skip"]["p"]
+        eta, tau, p = config["eta"], 1 / config["tau_inv"], config["p"]
         self.conv_skip = BNConvTriangle(n_channels, n_channels, kernel_size=1, stride=2, eta=eta, temp=tau, p=p)
 
-        eta, tau, p = config["conv_1_add"]["eta"], 1 / config["conv_1_add"]["tau_inv"], config["conv_1_add"]["p"]
+        eta, tau, p = config["eta"], 1 / config["tau_inv"], config["p"]
         self.conv_1_add = BNConvTriangle(in_channels, n_channels, kernel_size=1, eta=eta, temp=tau, p=p)
 
-        eta, tau, p = config["conv_1_cat"]["eta"], 1 / config["conv_1_cat"]["tau_inv"], config["conv_1_cat"]["p"]
+        eta, tau, p = config["eta"], 1 / config["tau_inv"], config["p"]
         self.conv_1_cat = BNConvTriangle(in_channels, n_channels, kernel_size=1, eta=eta, temp=tau, p=p)
 
-        eta, tau, p = config["dil_conv_5"]["eta"], 1 / config["dil_conv_5"]["tau_inv"], config["dil_conv_5"]["p"]
+        eta, tau, p = config["eta"], 1 / config["tau_inv"], config["p"]
         self.dil_conv_5 = BNConvTriangle(in_channels, n_channels, kernel_size=3, dilation=2, eta=eta, temp=tau, p=p)
 
         self.out_channels = 4 * n_channels
@@ -734,32 +748,32 @@ class SoftHebbNet(Module):
         super(SoftHebbNet, self).__init__()
 
         if config == "default":
-            default_config = {"eta": 0.01, "temp": 1, "p": None}
+            default_config = {"eta": 0.01, "tau_inv": 1, "p": None}
             config = {"conv_1": default_config, "conv_2": default_config, "conv_3": default_config}
         elif config == "original":
-            config = {"conv_1": {"eta": 0.08, "temp": 1, "p": 0.7},
-                      "conv_2": {"eta": 0.005, "temp": 1 / 0.65, "p": 1.4},
-                      "conv_3": {"eta": 0.01, "temp": 1 / 0.25, "p": None}}
+            config = {"conv_1": {"eta": 0.08, "tau_inv": 1, "p": 0.7},
+                      "conv_2": {"eta": 0.005, "tau_inv": 0.65, "p": 1.4},
+                      "conv_3": {"eta": 0.01, "tau_inv": 0.25, "p": None}}
         elif config == "tuned":
-            config = {"conv_1": {"eta": 0.08, "temp": 1, "p": 0.7},
-                      "conv_2": {"eta": 0.005, "temp": 1 / 0.65, "p": 1.4},
-                      "conv_3": {"eta": 0.01, "temp": 1 / 0.25, "p": None}}
+            config = {"conv_1": {"eta": 0.08, "tau_inv": 1, "p": 0.7},
+                      "conv_2": {"eta": 0.005, "tau_inv": 0.65, "p": 1.4},
+                      "conv_3": {"eta": 0.01, "tau_inv": 0.25, "p": None}}
 
         c = n_channels
         params = config["conv_1"]
-        eta, temp, p = params["eta"], params["temp"], params["p"]
-        self.layer_1 = BNConvTriangle(in_channels=3, out_channels=c, kernel_size=5, eta=eta, temp=temp, p=p)
+        eta, tau, p = params["eta"], 1 / params["tau_inv"], params["p"]
+        self.layer_1 = BNConvTriangle(in_channels=3, out_channels=c, kernel_size=5, eta=eta, temp=tau, p=p)
         self.pool_1 = MaxPool2d(kernel_size=4, stride=2, padding=1)
 
         params = config["conv_2"]
-        eta, temp, p = params["eta"], params["temp"], params["p"]
-        self.layer_2 = BNConvTriangle(in_channels=c, out_channels=4 * c, kernel_size=3, eta=eta, temp=temp, p=p)
+        eta, tau, p = params["eta"], 1 / params["tau_inv"], params["p"]
+        self.layer_2 = BNConvTriangle(in_channels=c, out_channels=4 * c, kernel_size=3, eta=eta, temp=tau, p=p)
         self.pool_2 = MaxPool2d(kernel_size=4, stride=2, padding=1)
 
         c *= 4
         params = config["conv_3"]
-        eta, temp, p = params["eta"], params["temp"], params["p"]
-        self.layer_3 = BNConvTriangle(in_channels=c, out_channels=4 * c, kernel_size=3, eta=eta, temp=temp, p=p)
+        eta, tau, p = params["eta"], 1 / params["tau_inv"], params["p"]
+        self.layer_3 = BNConvTriangle(in_channels=c, out_channels=4 * c, kernel_size=3, eta=eta, temp=tau, p=p)
         self.pool_3 = AvgPool2d(kernel_size=2, stride=2)
 
         c *= 4

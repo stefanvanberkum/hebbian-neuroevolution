@@ -229,6 +229,7 @@ def tune(model: str):
                 "tau_inv": hp.uniform(f"{name}/tau_inv", 0.1, 2), "p": hp.uniform(f"{name}/p", 0.1, 2)}
 
     if model == "HebbNet":
+        '''old
         search_space = {"n_channels": hp.quniform("n_channels", 8, 40, 2),
                         "alpha": hp.loguniform("alpha", log(1e-4), log(1)), "dropout": hp.uniform("dropout", 0, 1),
                         "n_epochs": hp.quniform("n_epochs", 1, 50, 1), "initial_conv": conv_config("initial_conv"),
@@ -242,6 +243,11 @@ def tune(model: str):
                                    "conv_1_add": conv_config("cell_2/conv_1_add"),
                                    "conv_1_cat": conv_config("cell_2/conv_1_cat"),
                                    "dil_conv_5": conv_config("cell_2/dil_conv_5")}}
+        '''
+        search_space = {"n_channels": hp.quniform("n_channels", 8, 40, 2),
+                        "alpha": hp.loguniform("alpha", log(1e-4), log(1)), "dropout": hp.uniform("dropout", 0, 1),
+                        "n_epochs": hp.quniform("n_epochs", 1, 50, 1), "conv_1": conv_config("conv_1"),
+                        "conv_2": conv_config("conv_2"), "conv_3": conv_config("conv_3")}
     elif model == "SoftHebb":
         search_space = {"n_channels": hp.quniform("n_channels", 32, 160, 8),
                         "alpha": hp.loguniform("alpha", log(1e-4), log(1)), "dropout": hp.uniform("dropout", 0, 1),

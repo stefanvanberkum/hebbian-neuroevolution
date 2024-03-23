@@ -84,7 +84,7 @@ def train_encoder(encoder: Module, data: Dataset, batch_size: int, device: str, 
     :param n_workers: The number of workers (default: 0, i.e., run in the main process).
     """
 
-    loader = DataLoader(data, batch_size=batch_size, num_workers=n_workers, drop_last=True)
+    loader = DataLoader(data, batch_size=batch_size, shuffle=True, num_workers=n_workers, drop_last=True)
 
     # Training loop.
     encoder.train()

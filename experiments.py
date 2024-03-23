@@ -250,6 +250,10 @@ def visualize():
             makedirs(path, exist_ok=True)
             sample = data[samples[i]]
 
+            with open(join(path, "correct.csv"), 'w') as out:
+                print("HebbNet,SoftHebb", file=out)
+                print(f"{correct_1[samples[i]]},{correct_2[samples[i]]}", file=out)
+
             with LayerCAM(model, model.initial_conv) as cam:
                 filename = "initial_conv.png"
                 filepath = join(path, filename)
@@ -259,7 +263,7 @@ def visualize():
             for cell in cells:
                 convs = [cell.preprocess_skip, cell.conv_skip, cell.conv_1_add, cell.conv_1_cat, cell.dil_conv_5]
                 for conv in convs:
-                    with LayerCAM(model, conv) as cam:
+                    with LayerCAM(model, conv.conv) as cam:
                         filename = f"{cell.name}_{conv.name}.png"
                         filepath = join(path, filename)
                         cam.visualize(sample[0], sample[1], filepath)
@@ -289,7 +293,7 @@ def visualize():
 
             convs = [encoder.layer_1, encoder.layer_2, encoder.layer_3]
             for conv in convs:
-                with LayerCAM(model, conv) as cam:
+                with LayerCAM(model, conv.conv) as cam:
                     filename = f"{conv.name}.png"
                     filepath = join(path, filename)
                     cam.visualize(sample[0], sample[1], filepath)
@@ -326,34 +330,35 @@ def bayesian_analysis():
             softhebb_accuracies = []
             with open(f"results/cv_accuracies_{dataset}.csv", 'w') as out:
                 out.write("HebbNet,SoftHebb\n")
-                for fold, (train_ids, test_ids) in tqdm(enumerate(folds.split(dataset.data, dataset.targets)),
-                                                        desc="Fold", file=sys.stdout):
-                    train_data = Subset(dataset, train_ids)
-                    train_data.data = train_data.dataset.data.to(device)
-                    train_data.targets = train_data.dataset.targets.to(device)
-                    test_data = Subset(dataset, test_ids)
-                    test_data.data = test_data.dataset.data.to(device)
-                    test_data.targets = test_data.dataset.targets.to(device)
+                for i in range(10):
+                    for fold, (train_ids, test_ids) in tqdm(enumerate(folds.split(dataset.data, dataset.targets)),
+                                                            desc="Fold", file=sys.stdout):
+                        train_data = Subset(dataset, train_ids)
+                        train_data.data = train_data.dataset.data.to(device)
+                        train_data.targets = train_data.dataset.targets.to(device)
+                        test_data = Subset(dataset, test_ids)
+                        test_data.data = test_data.dataset.data.to(device)
+                        test_data.targets = test_data.dataset.targets.to(device)
 
-                    # Train and evaluate HebbNet-A.
-                    encoder = HebbNetA()
-                    classifier = Classifier(encoder.out_channels * (32 // 2 ** 3) ** 2, 10,
-                                            dropout=encoder.config["dropout"])
-                    model = train(encoder, classifier, train_data, int(encoder.config["n_epochs"]), 10, 64,
-                                  alpha=encoder.config["alpha"], verbose=True)
-                    hebbnet_accuracy, _ = test(model, test_data, 256, device)
-                    hebbnet_accuracies.append(hebbnet_accuracy)
+                        # Train and evaluate HebbNet-A.
+                        encoder = HebbNetA()
+                        classifier = Classifier(encoder.out_channels * (32 // 2 ** 3) ** 2, 10,
+                                                dropout=encoder.config["dropout"])
+                        model = train(encoder, classifier, train_data, int(encoder.config["n_epochs"]), 10, 64,
+                                      alpha=encoder.config["alpha"], verbose=True)
+                        hebbnet_accuracy, _ = test(model, test_data, 256, device)
+                        hebbnet_accuracies.append(hebbnet_accuracy)
 
-                    # Train and evaluate the original SoftHebb network.
-                    encoder = SoftHebbNet()
-                    classifier = Classifier(encoder.out_channels * (32 // 2 ** 3) ** 2, 10,
-                                            dropout=encoder.config["dropout"])
-                    model = train(encoder, classifier, train_data, int(encoder.config["n_epochs"]), 10, 64,
-                                  alpha=encoder.config["alpha"], verbose=True)
-                    softhebb_accuracy, _ = test(model, test_data, 256, device)
-                    softhebb_accuracies.append(softhebb_accuracy)
+                        # Train and evaluate the original SoftHebb network.
+                        encoder = SoftHebbNet()
+                        classifier = Classifier(encoder.out_channels * (32 // 2 ** 3) ** 2, 10,
+                                                dropout=encoder.config["dropout"])
+                        model = train(encoder, classifier, train_data, int(encoder.config["n_epochs"]), 10, 64,
+                                      alpha=encoder.config["alpha"], verbose=True)
+                        softhebb_accuracy, _ = test(model, test_data, 256, device)
+                        softhebb_accuracies.append(softhebb_accuracy)
 
-                    out.write(f"{hebbnet_accuracy},{softhebb_accuracy}\n")
+                        out.write(f"{hebbnet_accuracy},{softhebb_accuracy}\n")
             pickle.dump(hebbnet_accuracies, open(f"results/raw/cv_HebbNet_accuracies_{dataset}.pkl", 'wb'))
             pickle.dump(softhebb_accuracies, open(f"results/raw/cv_SoftHebb_accuracies_{dataset}.pkl", 'wb'))
 
