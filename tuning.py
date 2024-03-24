@@ -247,7 +247,8 @@ def tune(model: str):
         search_space = {"n_channels": hp.quniform("n_channels", 8, 40, 2),
                         "alpha": hp.loguniform("alpha", log(1e-4), log(1)), "dropout": hp.uniform("dropout", 0, 1),
                         "n_epochs": hp.quniform("n_epochs", 1, 50, 1), "conv_1": conv_config("conv_1"),
-                        "conv_2": conv_config("conv_2"), "conv_3": conv_config("conv_3")}
+                        "skip_1": conv_config("skip_1"), "conv_2": conv_config("conv_2"),
+                        "skip_2": conv_config("skip_2"), "conv_3": conv_config("conv_3")}
     elif model == "SoftHebb":
         search_space = {"n_channels": hp.quniform("n_channels", 32, 160, 8),
                         "alpha": hp.loguniform("alpha", log(1e-4), log(1)), "dropout": hp.uniform("dropout", 0, 1),

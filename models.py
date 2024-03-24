@@ -80,7 +80,7 @@ class HebbianEncoder(Module):
         super(HebbianEncoder, self).__init__()
 
         out_channels = n_channels
-        self.initial_conv = BNConvTriangle(in_channels, out_channels, kernel_size=5, eta=eta)
+        self.initial_conv = BNConvTriangle(in_channels, out_channels, kernel_size=5, eta=0.08, p=0.7)
         skip_channels = in_channels  # The next skip input is the current input.
         in_channels = out_channels
         out_channels *= scaling_factor  # Scale the number of filters.
@@ -144,10 +144,12 @@ class HebbianEncoder(Module):
             for n in range(n_reduction):
                 if n == 0:
                     # First reduction.
-                    cell = HebbianCell(reduction_cell, in_channels, skip_channels, out_channels, eta, stride=2)
+                    cell = HebbianCell(reduction_cell, in_channels, skip_channels, out_channels, eta=0.005, stride=2,
+                                       temp=1 / 0.65, p=1.4, skip_eta=0.08, skip_p=0.7)
                 else:
-                    cell = HebbianCell(reduction_cell, in_channels, skip_channels, out_channels, eta, stride=2,
-                                       follows_reduction=True)
+                    cell = HebbianCell(reduction_cell, in_channels, skip_channels, out_channels, eta=0.01, stride=2,
+                                       follows_reduction=True, temp=1 / 0.25, skip_eta=0.005, skip_temp=1 / 0.65,
+                                       skip_p=1.4)
                 self.cells.append(cell)
                 skip_channels = in_channels  # The next skip input is the current input.
                 in_channels = cell.out_channels  # The next direct input is the current output.
@@ -195,10 +197,18 @@ class HebbianCell(Module):
     :param eta: The base learning rate used in SoftHebb convolutions.
     :param stride: The stride to be used for the operation (default: 1).
     :param follows_reduction: True if this cell follows a reduction cell (default: False).
+    :param temp: The temperature for the softmax operation (default: 1).
+    :param p: The power for the RePU triangle (optional).
+    :param skip_eta: The base learning rate used in the SoftHebb convolution for preprocessing the skip input.
+    :param skip_temp: The temperature for the softmax operation used in the SoftHebb convolution for preprocessing the
+        skip input. (default: 1).
+    :param skip_p: The power for the RePU triangle used in the SoftHebb convolution for preprocessing the skip input. (
+        optional).
     """
 
     def __init__(self, cell: Cell, in_channels: int, skip_channels: int, out_channels: int, eta: float, stride=1,
-                 follows_reduction=False):
+                 follows_reduction=False, temp=1.0, p: float | None = None, skip_eta=0.01, skip_temp=1.0,
+                 skip_p: float | None = None):
         super(HebbianCell, self).__init__()
 
         self.nodes = list(topological_sort(cell))  # Topological sorting to ensure an appropriate order of operations.
@@ -214,10 +224,11 @@ class HebbianCell(Module):
         self.preprocess_x = None
         if follows_reduction:
             # Reduce spatial shape of the skip input using a strided 3x3 convolution.
-            self.preprocess_skip = BNConvTriangle(skip_channels, out_channels, 3, eta, stride=2)
+            self.preprocess_skip = BNConvTriangle(skip_channels, out_channels, 3, skip_eta, stride=2, temp=skip_temp,
+                                                  p=skip_p)
         elif skip_channels != out_channels:
             # Apply a 3x3 convolution to make the number of channels match.
-            self.preprocess_skip = BNConvTriangle(skip_channels, out_channels, 3, eta)
+            self.preprocess_skip = BNConvTriangle(skip_channels, out_channels, 3, skip_eta, temp=skip_temp, p=skip_p)
 
         # Keep track of the output channels for each node to apply zero padding where necessary.
         node_channels = [0] * n_nodes
@@ -240,13 +251,17 @@ class HebbianCell(Module):
 
                 # Translate operations to modules. Only apply stride to original inputs.
                 if left == 0 or left == 1:
-                    module_left = self.translate(op_left, node_channels[left], out_channels, eta, stride)
+                    module_left = self.translate(op_left, node_channels[left], out_channels, eta, stride, temp=temp,
+                                                 p=p)
                 else:
-                    module_left = self.translate(op_left, node_channels[left], out_channels, eta, stride=1)
+                    module_left = self.translate(op_left, node_channels[left], out_channels, eta, stride=1, temp=temp,
+                                                 p=p)
                 if right == 0 or right == 1:
-                    module_right = self.translate(op_right, node_channels[right], out_channels, eta, stride)
+                    module_right = self.translate(op_right, node_channels[right], out_channels, eta, stride, temp=temp,
+                                                  p=p)
                 else:
-                    module_right = self.translate(op_right, node_channels[right], out_channels, eta, stride=1)
+                    module_right = self.translate(op_right, node_channels[right], out_channels, eta, stride=1,
+                                                  temp=temp, p=p)
 
                 # Record output channels for each op (only changes for convolutions).
                 if "conv" in op_left:
@@ -318,7 +333,8 @@ class HebbianCell(Module):
         return torch.cat(unused, dim=-3)
 
     @staticmethod
-    def translate(op: str, in_channels: int, n_channels: int, eta: float, stride: int):
+    def translate(op: str, in_channels: int, n_channels: int, eta: float, stride: int, temp=1.0,
+                  p: float | None = None):
         """Translate an operation from string name to the corresponding PyTorch module.
 
         :param op: The operation name.
@@ -326,6 +342,8 @@ class HebbianCell(Module):
         :param n_channels: The number of channels in this cell.
         :param eta: The base learning rate used in SoftHebb convolutions.
         :param stride: The stride to be used for the operation.
+        :param temp: The temperature for the softmax operation (default: 1).
+        :param p: The power for the RePU triangle (optional).
         :return: The corresponding PyTorch module.
         """
 
@@ -343,18 +361,24 @@ class HebbianCell(Module):
             return MaxPool2d(kernel_size=3, stride=stride, padding=1)
         elif op == 'conv_1':
             # 1x1 Hebbian convolution.
-            return BNConvTriangle(in_channels, n_channels, kernel_size=1, eta=eta, stride=stride)
+            return BNConvTriangle(in_channels, n_channels, kernel_size=1, eta=eta, stride=stride, temp=temp, p=p)
         elif op == 'conv_3':
             # 3x3 Hebbian convolution.
-            return BNConvTriangle(in_channels, n_channels, kernel_size=3, eta=eta, stride=stride)
+            return BNConvTriangle(in_channels, n_channels, kernel_size=3, eta=eta, stride=stride, temp=temp, p=p)
+        elif op == 'conv_5':
+            # 5x5 Hebbian convolution.
+            return BNConvTriangle(in_channels, n_channels, kernel_size=5, eta=eta, stride=stride, temp=temp, p=p)
         elif op == 'conv_13_31':
             # 1x3 and then 3x1 Hebbian convolution.
-            conv_13 = BNConvTriangle(in_channels, n_channels, kernel_size=(1, 3), eta=eta, stride=(1, stride))
-            conv_31 = BNConvTriangle(n_channels, n_channels, kernel_size=(3, 1), eta=eta, stride=(stride, 1))
+            conv_13 = BNConvTriangle(in_channels, n_channels, kernel_size=(1, 3), eta=eta, stride=(1, stride),
+                                     temp=temp, p=p)
+            conv_31 = BNConvTriangle(n_channels, n_channels, kernel_size=(3, 1), eta=eta, stride=(stride, 1), temp=temp,
+                                     p=p)
             return Sequential(conv_13, conv_31)
         elif op == 'dilated_conv_5':
             # 5x5 dilated Hebbian convolution (i.e., 3x3 with dilation=2).
-            return BNConvTriangle(in_channels, n_channels, kernel_size=3, eta=eta, stride=stride, dilation=2)
+            return BNConvTriangle(in_channels, n_channels, kernel_size=3, eta=eta, stride=stride, dilation=2, temp=temp,
+                                  p=p)
         else:
             raise ValueError(f"Operation {op} not found (internal error).")
 
@@ -419,7 +443,9 @@ class HebbNetA(Module):
         '''
         default_config = {"n_channels": 32, "alpha": 0.001, "dropout": 0.5, "n_epochs": 50,
                           "conv_1": {"eta": 0.01, "tau_inv": 1, "p": None},
+                          "skip_1": {"eta": 0.01, "tau_inv": 1, "p": None},
                           "conv_2": {"eta": 0.01, "tau_inv": 1, "p": None},
+                          "skip_2": {"eta": 0.01, "tau_inv": 1, "p": None},
                           "conv_3": {"eta": 0.01, "tau_inv": 1, "p": None}}
 
         if config is None:
@@ -436,13 +462,13 @@ class HebbNetA(Module):
         skip_channels = in_channels
         in_channels = n_channels
         out_channels = 4 * n_channels
-        self.cell_1 = HebbCellA(skip_channels, in_channels, out_channels, config["conv_1"], config["conv_2"])
+        self.cell_1 = HebbCellA(skip_channels, in_channels, out_channels, config["skip_1"], config["conv_2"])
 
         # Second reduction cell.
         skip_channels = n_channels
         in_channels = self.cell_1.out_channels
         out_channels = (4 ** 2) * n_channels
-        self.cell_2 = HebbCellA(skip_channels, in_channels, out_channels, config["conv_2"], config["conv_3"],
+        self.cell_2 = HebbCellA(skip_channels, in_channels, out_channels, config["skip_2"], config["conv_3"],
                                 follows_reduction=True)
         self.out_channels = self.cell_2.out_channels
 
@@ -756,7 +782,7 @@ class SoftHebbNet(Module):
                       "conv_3": {"eta": 0.01, "tau_inv": 0.25, "p": None}}
         elif config == "tuned":
             config = {"conv_1": {"eta": 0.08, "tau_inv": 1, "p": 0.7},
-                      "conv_2": {"eta": 0.005, "tau_inv": 0.65, "p": 1.4},
+                      "conv_2": {"eta": 0.01, "tau_inv": 0.5, "p": None},
                       "conv_3": {"eta": 0.01, "tau_inv": 0.25, "p": None}}
 
         c = n_channels
@@ -834,4 +860,79 @@ class SoftHebbBPNet(Module):
         x = self.flatten(x)
         x = self.dropout(x)
         x = self.linear(x)
+        return x
+
+
+class InceptionA(Module):
+    """Inception-A."""
+
+    def __init__(self, in_channels: int = 3, config: dict | str = None):
+        super(InceptionA, self).__init__()
+
+        default_config = {"n_channels": 32, "alpha": 0.001, "dropout": 0.5, "n_epochs": 50,
+                          "conv_1": {"eta": 0.08, "tau_inv": 1, "p": 0.7},
+                          "conv_2": {"eta": 0.005, "tau_inv": 0.65, "p": 1.4},
+                          "conv_3": {"eta": 0.01, "tau_inv": 0.25, "p": None}}
+
+        if config is None:
+            # Set to default hyperparameter settings.
+            config = default_config
+        self.config = config
+
+        # Initial 5x5 convolution.
+        n_channels = int(config["n_channels"])
+        eta, tau, p = config["conv_1"]["eta"], 1 / config["conv_1"]["tau_inv"], config["conv_1"]["p"]
+        self.initial_conv = BNConvTriangle(in_channels, n_channels, kernel_size=5, eta=eta, temp=tau, p=p)
+        self.reduction_1 = MaxPool2d(kernel_size=4, stride=2, padding=1)
+
+        # First inception module.
+        in_channels = n_channels
+        out_channels = 4 * n_channels
+        eta, tau, p = config["conv_2"]["eta"], 1 / config["conv_2"]["tau_inv"], config["conv_2"]["p"]
+        self.conv_1_1 = BNConvTriangle(in_channels, out_channels, kernel_size=1, eta=eta, temp=tau, p=p)
+        self.conv_1_3 = BNConvTriangle(in_channels, out_channels, kernel_size=3, eta=eta, temp=tau, p=p)
+        self.conv_1_5 = BNConvTriangle(in_channels, out_channels, kernel_size=5, eta=eta, temp=tau, p=p)
+        self.pool_1 = MaxPool2d(kernel_size=3, stride=1, padding=1)
+        self.reduction_2 = MaxPool2d(kernel_size=4, stride=2, padding=1)
+
+        # Second inception module.
+        in_channels = 3 * out_channels + in_channels
+        out_channels = (4 ** 2) * n_channels
+        eta, tau, p = config["conv_3"]["eta"], 1 / config["conv_3"]["tau_inv"], config["conv_3"]["p"]
+        self.conv_2_1 = BNConvTriangle(in_channels, out_channels, kernel_size=1, eta=eta, temp=tau, p=p)
+        self.conv_2_3 = BNConvTriangle(in_channels, out_channels, kernel_size=3, eta=eta, temp=tau, p=p)
+        self.conv_2_5 = BNConvTriangle(in_channels, out_channels, kernel_size=5, eta=eta, temp=tau, p=p)
+        self.pool_2 = MaxPool2d(kernel_size=3, stride=1, padding=1)
+        self.reduction_3 = AvgPool2d(kernel_size=2, stride=2)
+
+        self.out_channels = 3 * out_channels + in_channels
+
+    @torch.no_grad()
+    def forward(self, x: Tensor):
+        """Forward pass.
+
+        :param x: The input image.
+        :return: The feature encoding.
+        """
+
+        # Apply initial convolution.
+        x = self.initial_conv(x)
+        x = self.reduction_1(x)
+
+        # Run input through the first inception module.
+        x_1 = self.conv_1_1(x)
+        x_3 = self.conv_1_3(x)
+        x_5 = self.conv_1_5(x)
+        x_pool = self.pool_1(x)
+        x = torch.cat([x_1, x_3, x_5, x_pool], dim=-3)
+        x = self.reduction_2(x)
+
+        # Run input through the second inception module.
+        x_1 = self.conv_2_1(x)
+        x_3 = self.conv_2_3(x)
+        x_5 = self.conv_2_5(x)
+        x_pool = self.pool_2(x)
+        x = torch.cat([x_1, x_3, x_5, x_pool], dim=-3)
+        x = self.reduction_3(x)
+
         return x
