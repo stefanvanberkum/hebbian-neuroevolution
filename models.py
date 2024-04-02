@@ -10,8 +10,6 @@ Classes
 - :class:`HebbCellA`: The evolved HebbNet-A reduction cell.
 - :class:`BPNetA`: The backpropagation variant of the evolved HebbNet-A encoder.
 - :class:`BPCellA`: The backpropagation variant of the evolved HebbNet-A reduction cell.
-- :class:`NoSkipNetA`: The evolved HebbNet-A encoder without skip connections.
-- :class:`NoSkipCellA`: The evolved HebbNet-A reduction cell without skip connections.
 - :class:`SoftHebbNet`: The small SoftHebb encoder network for CIFAR-10.
 - :class:`SoftHebbBPNet`: The small backpropagation variant of the SoftHebb network for CIFAR-10.
 """
@@ -80,7 +78,7 @@ class HebbianEncoder(Module):
         super(HebbianEncoder, self).__init__()
 
         out_channels = n_channels
-        self.initial_conv = BNConvTriangle(in_channels, out_channels, kernel_size=5, eta=0.08, p=0.7)
+        self.initial_conv = BNConvTriangle(in_channels, out_channels, kernel_size=5, eta=eta)
         skip_channels = in_channels  # The next skip input is the current input.
         in_channels = out_channels
         out_channels *= scaling_factor  # Scale the number of filters.
@@ -144,12 +142,10 @@ class HebbianEncoder(Module):
             for n in range(n_reduction):
                 if n == 0:
                     # First reduction.
-                    cell = HebbianCell(reduction_cell, in_channels, skip_channels, out_channels, eta=0.005, stride=2,
-                                       temp=1 / 0.65, p=1.4, skip_eta=0.08, skip_p=0.7)
+                    cell = HebbianCell(reduction_cell, in_channels, skip_channels, out_channels, eta, stride=2)
                 else:
-                    cell = HebbianCell(reduction_cell, in_channels, skip_channels, out_channels, eta=0.01, stride=2,
-                                       follows_reduction=True, temp=1 / 0.25, skip_eta=0.005, skip_temp=1 / 0.65,
-                                       skip_p=1.4)
+                    cell = HebbianCell(reduction_cell, in_channels, skip_channels, out_channels, eta, stride=2,
+                                       follows_reduction=True)
                 self.cells.append(cell)
                 skip_channels = in_channels  # The next skip input is the current input.
                 in_channels = cell.out_channels  # The next direct input is the current output.
@@ -418,39 +414,19 @@ class Classifier(Module):
 class HebbNetA(Module):
     """HebbNet-A."""
 
-    def __init__(self, in_channels: int = 3, config: dict | str = None):
+    def __init__(self, in_channels: int = 3, config: dict | str = "tuned"):
         super(HebbNetA, self).__init__()
 
-        '''old
-        default_config = {'alpha': 0.0015545367218634766, 'cell_1': {
-            'conv_1_add': {'eta': 0.0014621374326182965, 'p': 0.5279574358515048, 'tau_inv': 0.7493232846451466},
-            'conv_1_cat': {'eta': 0.0057947724298832975, 'p': 0.6197822837606278, 'tau_inv': 0.4663922202611077},
-            'conv_skip': {'eta': 0.016248687817828403, 'p': 0.4699925090175727, 'tau_inv': 0.8483446864179627},
-            'dil_conv_5': {'eta': 0.01795636305652353, 'p': 0.7450758463222744, 'tau_inv': 0.5562034341552267},
-            'pre_skip': {'eta': 0.12103105111161451, 'p': 0.6509451041295371, 'tau_inv': 0.9465580871448495}},
-                          'cell_2': {'conv_1_add': {'eta': 0.0006959071335483481, 'p': 0.6907598350734472,
-                                                    'tau_inv': 0.5320086769714982},
-                                     'conv_1_cat': {'eta': 0.0775372926979992, 'p': 1.3132766081881837,
-                                                    'tau_inv': 0.967214850328739},
-                                     'conv_skip': {'eta': 0.37372098972476875, 'p': 1.0095629013963818,
-                                                   'tau_inv': 1.2754427093546286},
-                                     'dil_conv_5': {'eta': 0.01645775130399738, 'p': 1.0918837944761475,
-                                                    'tau_inv': 0.3087400952423616},
-                                     'pre_skip': {'eta': 0.07089172586453575, 'p': 1.5509360312884812,
-                                                  'tau_inv': 0.7425108901803054}}, 'dropout': 0.38135195907343367,
-                          'initial_conv': {'eta': 0.2927753794539101, 'p': 0.5584704070052638,
-                                           'tau_inv': 0.5175752728535201}, 'n_channels': 34.0, 'n_epochs': 42.0}
-        '''
-        default_config = {"n_channels": 32, "alpha": 0.001, "dropout": 0.5, "n_epochs": 50,
-                          "conv_1": {"eta": 0.01, "tau_inv": 1, "p": None},
-                          "skip_1": {"eta": 0.01, "tau_inv": 1, "p": None},
-                          "conv_2": {"eta": 0.01, "tau_inv": 1, "p": None},
-                          "skip_2": {"eta": 0.01, "tau_inv": 1, "p": None},
-                          "conv_3": {"eta": 0.01, "tau_inv": 1, "p": None}}
-
-        if config is None:
-            # Set to default hyperparameter settings.
-            config = default_config
+        if config == "default":
+            config = {"n_channels": 24, "alpha": 0.001, "dropout": 0.5, "n_epochs": 50,
+                      "conv_1": {"eta": 0.01, "tau_inv": 1, "p": None},
+                      "conv_2": {"eta": 0.01, "tau_inv": 1, "p": None},
+                      "conv_3": {"eta": 0.01, "tau_inv": 1, "p": None}}
+        elif config == "tuned":
+            config = {'n_channels': 40, 'alpha': 0.0017951869927118615, 'dropout': 0.2331991642665764, 'n_epochs': 33,
+                      'conv_1': {'eta': 0.06203186024739623, 'p': 0.6022817150356787, 'tau_inv': 0.457869979649828},
+                      'conv_2': {'eta': 0.016207688538775866, 'p': 1.350619074697909, 'tau_inv': 0.9495469692133909},
+                      'conv_3': {'eta': 0.006901722666400572, 'p': 1.0948427757638093, 'tau_inv': 0.5031290494137383}}
         self.config = config
 
         # Initial 5x5 convolution.
@@ -462,13 +438,13 @@ class HebbNetA(Module):
         skip_channels = in_channels
         in_channels = n_channels
         out_channels = 4 * n_channels
-        self.cell_1 = HebbCellA(skip_channels, in_channels, out_channels, config["skip_1"], config["conv_2"])
+        self.cell_1 = HebbCellA(skip_channels, in_channels, out_channels, config["conv_1"], config["conv_2"])
 
         # Second reduction cell.
         skip_channels = n_channels
         in_channels = self.cell_1.out_channels
         out_channels = (4 ** 2) * n_channels
-        self.cell_2 = HebbCellA(skip_channels, in_channels, out_channels, config["skip_2"], config["conv_3"],
+        self.cell_2 = HebbCellA(skip_channels, in_channels, out_channels, config["conv_2"], config["conv_3"],
                                 follows_reduction=True)
         self.out_channels = self.cell_2.out_channels
 
@@ -567,8 +543,7 @@ class BPNetA(Module):
         super(BPNetA, self).__init__()
 
         # Initial 5x5 convolution.
-        # TODO: Set to correct number of channels.
-        n_channels = 32
+        n_channels = 40
         self.initial_conv = BNConvReLU(in_channels, n_channels, kernel_size=5)
 
         # First reduction cell.
@@ -659,133 +634,35 @@ class BPCellA(Module):
         return torch.cat([skip_pool, x_add, x_1_cat, x_dil_5], dim=-3)
 
 
-class NoSkipNetA(Module):
-    """HebbNet-A without skip connections."""
-
-    def __init__(self, in_channels: int = 3, config: dict | None = None):
-        super(NoSkipNetA, self).__init__()
-
-        # TODO: Add default hyperparameters.
-        default_config = {"n_channels": 32, "alpha": 0.001, "dropout": 0.5, "n_epochs": 50,
-                          "initial_conv": {"eta": 0.01, "tau_inv": 1, "p": None},
-                          "cell_1": {"pre_skip": {"eta": 0.01, "tau_inv": 1, "p": None},
-                                     "conv_skip": {"eta": 0.01, "tau_inv": 1, "p": None},
-                                     "conv_1_add": {"eta": 0.01, "tau_inv": 1, "p": None},
-                                     "conv_1_cat": {"eta": 0.01, "tau_inv": 1, "p": None},
-                                     "dil_conv_5": {"eta": 0.01, "tau_inv": 1, "p": None}},
-                          "cell_2": {"pre_skip": {"eta": 0.01, "tau_inv": 1, "p": None},
-                                     "conv_skip": {"eta": 0.01, "tau_inv": 1, "p": None},
-                                     "conv_1_add": {"eta": 0.01, "tau_inv": 1, "p": None},
-                                     "conv_1_cat": {"eta": 0.01, "tau_inv": 1, "p": None},
-                                     "dil_conv_5": {"eta": 0.01, "tau_inv": 1, "p": None}}}
-
-        if config is None:
-            # Set to default hyperparameter settings.
-            config = default_config
-        self.config = config
-
-        # Initial 5x5 convolution.
-        n_channels = int(config["n_channels"])
-        eta, tau, p = config["initial_conv"]["eta"], 1 / config["initial_conv"]["tau_inv"], config["initial_conv"]["p"]
-        self.initial_conv = BNConvTriangle(in_channels, n_channels, kernel_size=5, eta=eta, temp=tau, p=p)
-
-        # First reduction cell.
-        in_channels = n_channels
-        out_channels = 4 * n_channels
-        self.cell_1 = NoSkipCellA(in_channels, out_channels, config["cell_1"])
-
-        # Second reduction cell.
-        in_channels = self.cell_1.out_channels
-        out_channels = (4 ** 2) * n_channels
-        self.cell_2 = NoSkipCellA(in_channels, out_channels, config["cell_2"], follows_reduction=True)
-        self.out_channels = self.cell_2.out_channels
-
-        self.pool = AvgPool2d(kernel_size=2, stride=2)
-
-    @torch.no_grad()
-    def forward(self, x: Tensor):
-        """Forward pass.
-
-        :param x: The input image.
-        :return: The feature encoding.
-        """
-
-        # Apply initial convolution.
-        x = self.initial_conv(x)
-
-        # Run input through the first reduction cell.
-        x = self.cell_1(x)
-
-        # Run input through the second reduction cell.
-        x = self.cell_2(x)
-
-        # Apply pooling.
-        x = self.pool(x)
-
-        return x
-
-
-class NoSkipCellA(Module):
-    """The evolved reduction cell for HebbNet-A without skip connections."""
-
-    def __init__(self, in_channels: int, n_channels: int, config: dict, follows_reduction=False):
-        super(NoSkipCellA, self).__init__()
-
-        self.x_pool = MaxPool2d(kernel_size=3, stride=2, padding=1)
-
-        eta, tau, p = config["conv_1_add"]["eta"], 1 / config["conv_1_add"]["tau_inv"], config["conv_1_add"]["p"]
-        self.conv_1_add = BNConvTriangle(in_channels, n_channels, kernel_size=1, eta=eta, temp=tau, p=p)
-
-        eta, tau, p = config["conv_1_cat"]["eta"], 1 / config["conv_1_cat"]["tau_inv"], config["conv_1_cat"]["p"]
-        self.conv_1_cat = BNConvTriangle(in_channels, n_channels, kernel_size=1, eta=eta, temp=tau, p=p)
-
-        eta, tau, p = config["dil_conv_5"]["eta"], 1 / config["dil_conv_5"]["tau_inv"], config["dil_conv_5"]["p"]
-        self.dil_conv_5 = BNConvTriangle(in_channels, n_channels, kernel_size=3, dilation=2, eta=eta, temp=tau, p=p)
-
-        self.out_channels = 4 * n_channels
-
-    @torch.no_grad()
-    def forward(self, x: Tensor):
-        """Forward pass.
-
-        :param x: Direct input.
-        :return: The cell output.
-        """
-
-        # Process direct input.
-        x = self.x_pool(x)
-        x_1_add = self.conv_1_add(x)
-        x_1_cat = self.conv_1_cat(x)
-        x_dil_5 = self.dil_conv_5(x)
-
-        # Concatenate all unused intermediate tensors.
-        return torch.cat([x_1_add, x_1_cat, x_dil_5], dim=-3)
-
-
 class SoftHebbNet(Module):
     """The small SoftHebb encoder network for CIFAR-10.
 
-    :param n_channels: The amount of initial channels (default: 96).
     :param config: Hyperparameter configuration, either 'default' (no tuning), 'original' (original tuning),
         'tuned' (from random search), or a dictionary with custom settings.
     """
 
-    def __init__(self, n_channels: int = 96, config: str | dict = "tuned"):
+    def __init__(self, config: str | dict = "tuned"):
         super(SoftHebbNet, self).__init__()
 
         if config == "default":
             default_config = {"eta": 0.01, "tau_inv": 1, "p": None}
-            config = {"conv_1": default_config, "conv_2": default_config, "conv_3": default_config}
+            config = {"n_channels": 96, "alpha": 0.001, "dropout": 0.5, "n_epochs": 50, "conv_1": default_config,
+                      "conv_2": default_config, "conv_3": default_config}
         elif config == "original":
-            config = {"conv_1": {"eta": 0.08, "tau_inv": 1, "p": 0.7},
+            config = {"n_channels": 96, "alpha": 0.001, "dropout": 0.5, "n_epochs": 50,
+                      "conv_1": {"eta": 0.08, "tau_inv": 1, "p": 0.7},
                       "conv_2": {"eta": 0.005, "tau_inv": 0.65, "p": 1.4},
                       "conv_3": {"eta": 0.01, "tau_inv": 0.25, "p": None}}
         elif config == "tuned":
-            config = {"conv_1": {"eta": 0.08, "tau_inv": 1, "p": 0.7},
-                      "conv_2": {"eta": 0.01, "tau_inv": 0.5, "p": None},
-                      "conv_3": {"eta": 0.01, "tau_inv": 0.25, "p": None}}
+            config = {'n_channels': 104, 'alpha': 0.00011141993913945598, 'dropout': 0.5543794710051737, 'n_epochs': 47,
+                      'conv_1': {'eta': 0.07431711472889782, 'p': 0.880224751955424, 'tau_inv': 1.0366747471998239},
+                      'conv_2': {'eta': 0.00010274768914408582, 'p': 0.7551712595998065, 'tau_inv': 1.9548608559931184},
+                      'conv_3': {'eta': 0.00029684728652530217, 'p': 1.5283171368979298,
+                                 'tau_inv': 0.26798560666363835}}
 
-        c = n_channels
+        self.config = config
+
+        c = int(config["n_channels"])
         params = config["conv_1"]
         eta, tau, p = params["eta"], 1 / params["tau_inv"], params["p"]
         self.layer_1 = BNConvTriangle(in_channels=3, out_channels=c, kernel_size=5, eta=eta, temp=tau, p=p)
@@ -860,79 +737,4 @@ class SoftHebbBPNet(Module):
         x = self.flatten(x)
         x = self.dropout(x)
         x = self.linear(x)
-        return x
-
-
-class InceptionA(Module):
-    """Inception-A."""
-
-    def __init__(self, in_channels: int = 3, config: dict | str = None):
-        super(InceptionA, self).__init__()
-
-        default_config = {"n_channels": 32, "alpha": 0.001, "dropout": 0.5, "n_epochs": 50,
-                          "conv_1": {"eta": 0.08, "tau_inv": 1, "p": 0.7},
-                          "conv_2": {"eta": 0.005, "tau_inv": 0.65, "p": 1.4},
-                          "conv_3": {"eta": 0.01, "tau_inv": 0.25, "p": None}}
-
-        if config is None:
-            # Set to default hyperparameter settings.
-            config = default_config
-        self.config = config
-
-        # Initial 5x5 convolution.
-        n_channels = int(config["n_channels"])
-        eta, tau, p = config["conv_1"]["eta"], 1 / config["conv_1"]["tau_inv"], config["conv_1"]["p"]
-        self.initial_conv = BNConvTriangle(in_channels, n_channels, kernel_size=5, eta=eta, temp=tau, p=p)
-        self.reduction_1 = MaxPool2d(kernel_size=4, stride=2, padding=1)
-
-        # First inception module.
-        in_channels = n_channels
-        out_channels = 4 * n_channels
-        eta, tau, p = config["conv_2"]["eta"], 1 / config["conv_2"]["tau_inv"], config["conv_2"]["p"]
-        self.conv_1_1 = BNConvTriangle(in_channels, out_channels, kernel_size=1, eta=eta, temp=tau, p=p)
-        self.conv_1_3 = BNConvTriangle(in_channels, out_channels, kernel_size=3, eta=eta, temp=tau, p=p)
-        self.conv_1_5 = BNConvTriangle(in_channels, out_channels, kernel_size=5, eta=eta, temp=tau, p=p)
-        self.pool_1 = MaxPool2d(kernel_size=3, stride=1, padding=1)
-        self.reduction_2 = MaxPool2d(kernel_size=4, stride=2, padding=1)
-
-        # Second inception module.
-        in_channels = 3 * out_channels + in_channels
-        out_channels = (4 ** 2) * n_channels
-        eta, tau, p = config["conv_3"]["eta"], 1 / config["conv_3"]["tau_inv"], config["conv_3"]["p"]
-        self.conv_2_1 = BNConvTriangle(in_channels, out_channels, kernel_size=1, eta=eta, temp=tau, p=p)
-        self.conv_2_3 = BNConvTriangle(in_channels, out_channels, kernel_size=3, eta=eta, temp=tau, p=p)
-        self.conv_2_5 = BNConvTriangle(in_channels, out_channels, kernel_size=5, eta=eta, temp=tau, p=p)
-        self.pool_2 = MaxPool2d(kernel_size=3, stride=1, padding=1)
-        self.reduction_3 = AvgPool2d(kernel_size=2, stride=2)
-
-        self.out_channels = 3 * out_channels + in_channels
-
-    @torch.no_grad()
-    def forward(self, x: Tensor):
-        """Forward pass.
-
-        :param x: The input image.
-        :return: The feature encoding.
-        """
-
-        # Apply initial convolution.
-        x = self.initial_conv(x)
-        x = self.reduction_1(x)
-
-        # Run input through the first inception module.
-        x_1 = self.conv_1_1(x)
-        x_3 = self.conv_1_3(x)
-        x_5 = self.conv_1_5(x)
-        x_pool = self.pool_1(x)
-        x = torch.cat([x_1, x_3, x_5, x_pool], dim=-3)
-        x = self.reduction_2(x)
-
-        # Run input through the second inception module.
-        x_1 = self.conv_2_1(x)
-        x_3 = self.conv_2_3(x)
-        x_5 = self.conv_2_5(x)
-        x_pool = self.pool_2(x)
-        x = torch.cat([x_1, x_3, x_5, x_pool], dim=-3)
-        x = self.reduction_3(x)
-
         return x

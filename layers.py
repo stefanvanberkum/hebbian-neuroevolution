@@ -358,7 +358,8 @@ class BNConvReLU(Module):
 
         self.bn = BatchNorm2d(num_features=in_channels, affine=False)
         if stride == 1:
-            self.conv = Conv2d(in_channels, out_channels, kernel_size, dilation=dilation, padding_mode='same')
+            self.conv = Conv2d(in_channels, out_channels, kernel_size, padding='same', dilation=dilation,
+                               padding_mode='reflect')
         elif dilation == 2:
             self.conv = Conv2d(in_channels, out_channels, kernel_size, stride=2, dilation=2, padding=1,
                                padding_mode='reflect')

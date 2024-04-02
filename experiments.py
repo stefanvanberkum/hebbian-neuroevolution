@@ -32,19 +32,19 @@ from torch.cuda.amp import GradScaler
 from torch.nn import CrossEntropyLoss, Module
 from torch.optim import Adam
 from torch.optim.lr_scheduler import CosineAnnealingLR
-from torch.utils.data import ConcatDataset, DataLoader, Dataset, Subset
+from torch.utils.data import DataLoader, Dataset, Subset
 from tqdm import tqdm
 
 from dataloader import load
-from layercam import LayerCAM
-from models import BPNetA, Classifier, HebbNet, HebbNetA, NoSkipNetA, SoftHebbBPNet, SoftHebbNet
+from layercam import HebbNetAGrad, HebbNetGrad, LayerCAM, SoftHebbNetGrad
+from models import BPNetA, Classifier, HebbNetA, SoftHebbBPNet, SoftHebbNet
 from training import train
 
 
 def evaluate(model: str, mode: str, dataset: str):
     """Train and test a model on a given dataset.
 
-    :param model: The model to test, one of: {HebbNet, SoftHebb, NoSkip}.
+    :param model: The model to test, one of: {HebbNet, SoftHebb}.
     :param mode: The training mode, one of: {Hebbian, BP}
     :param dataset: The dataset to test on, one of: {CIFAR10, CIFAR100, SVHN}.
     """
@@ -54,6 +54,12 @@ def evaluate(model: str, mode: str, dataset: str):
     train_data, test_data = load(dataset)
     accuracies = []
     correct = np.zeros(len(test_data))  # Keep track of how often the architecture gets each sample correct.
+    correct_model = -np.ones(len(test_data))  # For each sample, record one of the models that got it right.
+
+    if dataset == "CIFAR100":
+        n_classes = 100
+    else:
+        n_classes = 10
 
     print(f"Training and testing a {mode} {model} model on {dataset}...")
     with open(f"results/raw/accuracies_{dataset}_{mode}_{model}.csv", 'w') as out:
@@ -66,24 +72,25 @@ def evaluate(model: str, mode: str, dataset: str):
                 encoder = SoftHebbNet()
             elif model == "SoftHebb" and mode == "BP":
                 encoder = SoftHebbBPNet()  # Includes classifier.
-            elif model == "NoSkip" and mode == "Hebbian":
-                encoder = NoSkipNetA()
             else:
                 raise ValueError(f"The {mode} {model} model not found.")
             if mode == "Hebbian":
-                classifier = Classifier(encoder.out_channels * (32 // 2 ** 3) ** 2, 10,
+                classifier = Classifier(encoder.out_channels * (32 // 2 ** 3) ** 2, n_classes,
                                         dropout=encoder.config["dropout"])
-                model = train(encoder, classifier, train_data, int(encoder.config["n_epochs"]), 10, 64,
-                              alpha=encoder.config["alpha"], verbose=True)
+                m = train(encoder, classifier, train_data, int(encoder.config["n_epochs"]), 10, 64,
+                          alpha=encoder.config["alpha"], verbose=True)
             else:
-                model = train_bp(encoder, train_data, int(encoder.config["n_epochs"]), 64, device)
-            accuracy, is_correct = test(model, test_data, 256, device)
+                m = train_bp(encoder, train_data, 50, 64, device)
+            accuracy, is_correct = test(m, test_data, 256, device)
             accuracies.append(accuracy)
             correct += is_correct
+            correct_model[is_correct] = i
+            torch.save(m.state_dict(), f"results/raw/{dataset}_{mode}_{model}_{i}.pt")
 
             out.write(f"{accuracy}\n")
     pickle.dump(accuracies, open(f"results/raw/accuracies_{dataset}_{mode}_{model}.pkl", 'wb'))
     np.save(f"results/raw/correct_{dataset}_{mode}_{model}.npy", correct)
+    np.save(f"results/raw/correct_model_{dataset}_{mode}_{model}.npy", correct_model)
 
 
 def train_bp(model: Module, data: Dataset, n_epochs: int, batch_size: int, device: str, n_workers=0, verbose=True):
@@ -107,6 +114,7 @@ def train_bp(model: Module, data: Dataset, n_epochs: int, batch_size: int, devic
     optimizer = Adam(model.parameters())
     scheduler = CosineAnnealingLR(optimizer, n_epochs)
     scaler = GradScaler()
+    model.to(device)
     model.train()
 
     # Training loop.
@@ -170,7 +178,7 @@ def test(model: Module, data: Dataset, batch_size: int, device: str, n_workers=0
 
     # Test loop.
     model.eval()
-    correct = np.array([])
+    correct = np.array([], dtype=bool)
     for i, data in enumerate(loader):
         # Run batch through model and get number of correct predictions.
         x, y = data
@@ -178,7 +186,7 @@ def test(model: Module, data: Dataset, batch_size: int, device: str, n_workers=0
         y = y.to(device)
         logits = model(x)
 
-        correct = np.concatenate((correct, (torch.argmax(logits, dim=1) == y).numpy()))
+        correct = np.concatenate((correct, (torch.argmax(logits, dim=1) == y).cpu().numpy()))
     return np.mean(correct) * 100, correct
 
 
@@ -214,103 +222,117 @@ def visualize():
         makedirs(f"results/visualization/{dataset}", exist_ok=True)
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
+        if dataset == "CIFAR100":
+            n_classes = 100
+        else:
+            n_classes = 10
+
         train_data, test_data = load(dataset)
         test_loader = DataLoader(test_data, batch_size=len(test_data))
         data = next(iter(test_loader))
-
-        encoder = HebbNetA()
-        classifier = Classifier(encoder.out_channels * (32 // 2 ** 3) ** 2, 10, dropout=encoder.config["dropout"])
-        if exists(f"results/raw/visualization_encoder_{dataset}.pt"):
-            # Load checkpoint.
-            encoder_state = torch.load(f"results/raw/visualization_encoder_{dataset}.pt")
-            classifier_state = torch.load(f"results/raw/visualization_classifier_{dataset}.pt")
-            encoder.load_state_dict(encoder_state)
-            classifier.load_state_dict(classifier_state)
-            model = HebbNet(encoder, classifier)
-            is_correct = pickle.load(open(f"results/raw/correct_{dataset}.pkl", 'rb'))
-        else:
-            # Train model.
-            model = train(encoder, classifier, train_data, int(encoder.config["n_epochs"]), 10, 64,
-                          alpha=encoder.config["alpha"], verbose=True)
-            _, is_correct = test(model, test_data, 256, device)
-            torch.save(encoder.state_dict(), f"results/raw/visualization_encoder_{dataset}.pt")
-            torch.save(classifier.state_dict(), f"results/raw/visualization_classifier_{dataset}.pt")
-            pickle.dump(is_correct, open(f"results/raw/correct_{dataset}.pkl", 'wb'))
 
         correct_1 = np.load(f"results/raw/correct_{dataset}_Hebbian_HebbNet.npy")
         correct_2 = np.load(f"results/raw/correct_{dataset}_Hebbian_SoftHebb.npy")
         ratio = correct_1 / (correct_2 + 1)  # Compute improvement ratio.
         samples = np.argsort(ratio)  # Get indices sorted based on the improvement ratio.
-        is_correct = is_correct[samples]  # Sort the boolean vector is_correct accordingly.
-        samples = samples[is_correct]  # Filter the samples based on whether the current model gets them right.
-        samples = samples[-5:]  # Get the five samples with the best improvement ratio, provided they are correct now.
+        samples = samples[-5:]  # Get the five samples with the best improvement ratio.
+
+        # Load array that specifies which model got the samples correct.
+        correct_model = np.load(f"results/raw/correct_model_{dataset}_Hebbian_HebbNet.npy").astype(int)
 
         for i in range(5):
             path = f"results/visualization/{dataset}/{i}/HebbNet"
             makedirs(path, exist_ok=True)
-            sample = data[samples[i]]
+            sample = data[0][samples[i]].unsqueeze(0).requires_grad_()
+            target = data[1][samples[i]]
 
-            with open(join(path, "correct.csv"), 'w') as out:
+            # Save original.
+            sample_copy = torch.clone(sample).squeeze().movedim(0, 2).detach().cpu().numpy() / 255
+            plt.imsave(f"results/visualization/{dataset}/{i}/original.png", sample_copy, dpi=300)
+
+            # Load model.
+            encoder = HebbNetAGrad()
+            classifier = Classifier(encoder.out_channels * (32 // 2 ** 3) ** 2, n_classes,
+                                    dropout=encoder.config["dropout"])
+            model = HebbNetGrad(encoder, classifier)
+            model_ind = correct_model[samples[i]]  # Get a model that got this sample right.
+            model_state_dict = torch.load(f"results/raw/{dataset}_Hebbian_HebbNet_{model_ind}.pt")
+            model.load_state_dict(model_state_dict)
+            model.to(device)
+            model.eval()
+
+            with open(join(f"results/visualization/{dataset}/{i}", "correct.csv"), 'w') as out:
                 print("HebbNet,SoftHebb", file=out)
                 print(f"{correct_1[samples[i]]},{correct_2[samples[i]]}", file=out)
 
-            with LayerCAM(model, model.initial_conv) as cam:
+            with open(join(f"results/visualization/{dataset}/{i}", "label.csv"), 'w') as out:
+                print(f"{target}", file=out)
+
+            with LayerCAM(model, encoder.initial_conv) as cam:
                 filename = "initial_conv.png"
                 filepath = join(path, filename)
-                cam.visualize(sample[0], sample[1], filepath)
+                cam.visualize(sample, target, filepath)
 
             cells = [encoder.cell_1, encoder.cell_2]
+            cell_names = {encoder.cell_1: "cell_1", encoder.cell_2: "cell_2"}
             for cell in cells:
                 convs = [cell.preprocess_skip, cell.conv_skip, cell.conv_1_add, cell.conv_1_cat, cell.dil_conv_5]
+                conv_names = {cell.preprocess_skip: "preprocess_skip", cell.conv_skip: "conv_skip",
+                              cell.conv_1_add: "conv_1_add", cell.conv_1_cat: "conv_1_cat",
+                              cell.dil_conv_5: "dil_conv_5"}
                 for conv in convs:
                     with LayerCAM(model, conv.conv) as cam:
-                        filename = f"{cell.name}_{conv.name}.png"
+                        filename = f"{cell_names[cell]}_{conv_names[conv]}.png"
                         filepath = join(path, filename)
-                        cam.visualize(sample[0], sample[1], filepath)
+                        cam.visualize(sample, target, filepath)
         print("Done!")
 
         print(f"Visualizing the SoftHebb network for {dataset}...")
-        encoder = SoftHebbNet()
-        classifier = Classifier(encoder.out_channels * (32 // 2 ** 3) ** 2, 10, dropout=encoder.config["dropout"])
-        if exists(f"results/raw/visualization_softhebb_encoder_{dataset}.pt"):
-            # Load checkpoint.
-            encoder_state = torch.load(f"results/raw/visualization_softhebb_encoder_{dataset}.pt")
-            classifier_state = torch.load(f"results/raw/visualization_softhebb_classifier_{dataset}.pt")
-            encoder.load_state_dict(encoder_state)
-            classifier.load_state_dict(classifier_state)
-            model = HebbNet(encoder, classifier)
-        else:
-            # Train model.
-            model = train(encoder, classifier, train_data, int(encoder.config["n_epochs"]), 10, 64,
-                          alpha=encoder.config["alpha"], verbose=True)
-            torch.save(encoder.state_dict(), f"results/raw/visualization_softhebb_encoder_{dataset}.pt")
-            torch.save(classifier.state_dict(), f"results/raw/visualization_softhebb_classifier_{dataset}.pt")
+
+        # Load array that specifies which model got the samples correct.
+        correct_model = np.load(f"results/raw/correct_model_{dataset}_Hebbian_SoftHebb.npy").astype(int)
 
         for i in range(5):
             path = f"results/visualization/{dataset}/{i}/SoftHebb"
             makedirs(path, exist_ok=True)
-            sample = data[samples[i]]
+            sample = data[0][samples[i]].unsqueeze(0).requires_grad_()
+            target = data[1][samples[i]]
+
+            # Load model.
+            encoder = SoftHebbNetGrad()
+            classifier = Classifier(encoder.out_channels * (32 // 2 ** 3) ** 2, n_classes,
+                                    dropout=encoder.config["dropout"])
+            model = HebbNetGrad(encoder, classifier)
+            model_ind = correct_model[samples[i]]  # Get a model that got this sample right (if any).
+            model_ind = model_ind if model_ind != -1 else 0
+            model_state_dict = torch.load(f"results/raw/{dataset}_Hebbian_SoftHebb_{model_ind}.pt")
+            model.load_state_dict(model_state_dict)
+            model.to(device)
+            model.eval()
 
             convs = [encoder.layer_1, encoder.layer_2, encoder.layer_3]
+            conv_names = {encoder.layer_1: "layer_1", encoder.layer_2: "layer_2", encoder.layer_3: "layer_3"}
             for conv in convs:
                 with LayerCAM(model, conv.conv) as cam:
-                    filename = f"{conv.name}.png"
+                    filename = f"{conv_names[conv]}.png"
                     filepath = join(path, filename)
-                    cam.visualize(sample[0], sample[1], filepath)
+                    cam.visualize(sample, target, filepath)
         print("Done!")
 
 
 def bayesian_analysis():
     """Run a Bayesian analysis to estimate the effect size.
 
-    This method runs stratified 10-fold cross-validation on CIFAR-100 and SVHN for both HebbNet-A and the original
-    SoftHebb network, and computes a posterior distribution over the difference between the two networks. It then
-    records a 95% confidence interval.
+    This method performs ten runs of stratified 10-fold cross-validation on CIFAR-100 and SVHN for both HebbNet-A and
+    the original SoftHebb network, and computes a posterior distribution over the difference between the two
+    networks. It then plots the posterior and records various confidence intervals.
     """
 
     makedirs(f"results/raw", exist_ok=True)
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
+    params_cifar100 = None
+    params_svhn = None
     for dataset in ['CIFAR100', 'SVHN']:
         print(f"Running a Bayesian analysis on {dataset}...")
         if exists(f"results/raw/cv_HebbNet_accuracies_{dataset}.pkl"):
@@ -319,51 +341,59 @@ def bayesian_analysis():
             print("Loaded checkpoint!")
         else:
             train_data, test_data = load(dataset)
-            train_data.data = train_data.data.cpu()
-            train_data.targets = train_data.targets.cpu()
-            test_data.data = test_data.data.cpu()
-            test_data.targets = test_data.targets.cpu()
-            dataset = ConcatDataset([train_data, test_data])
+            train_data.data = torch.concat([train_data.data.cpu(), test_data.data.cpu()], dim=0)
+            train_data.targets = torch.concat([train_data.targets.cpu(), test_data.targets.cpu()], dim=0)
+
+            if dataset == "CIFAR100":
+                n_classes = 100
+            else:
+                n_classes = 10
 
             folds = StratifiedKFold(n_splits=10, shuffle=True)
             hebbnet_accuracies = []
             softhebb_accuracies = []
             with open(f"results/cv_accuracies_{dataset}.csv", 'w') as out:
                 out.write("HebbNet,SoftHebb\n")
-                for i in range(10):
-                    for fold, (train_ids, test_ids) in tqdm(enumerate(folds.split(dataset.data, dataset.targets)),
-                                                            desc="Fold", file=sys.stdout):
-                        train_data = Subset(dataset, train_ids)
-                        train_data.data = train_data.dataset.data.to(device)
-                        train_data.targets = train_data.dataset.targets.to(device)
-                        test_data = Subset(dataset, test_ids)
+                for i in tqdm(range(10), desc="Run", file=sys.stdout):
+                    for fold, (train_ids, test_ids) in enumerate(folds.split(train_data.data, train_data.targets)):
+                        training_data = Subset(train_data, train_ids)
+                        training_data.data = training_data.dataset.data.to(device)
+                        training_data.targets = training_data.dataset.targets.to(device)
+                        test_data = Subset(train_data, test_ids)
                         test_data.data = test_data.dataset.data.to(device)
                         test_data.targets = test_data.dataset.targets.to(device)
 
                         # Train and evaluate HebbNet-A.
+                        print("Training HebbNet-A...")
                         encoder = HebbNetA()
-                        classifier = Classifier(encoder.out_channels * (32 // 2 ** 3) ** 2, 10,
+                        classifier = Classifier(encoder.out_channels * (32 // 2 ** 3) ** 2, n_classes,
                                                 dropout=encoder.config["dropout"])
-                        model = train(encoder, classifier, train_data, int(encoder.config["n_epochs"]), 10, 64,
+                        model = train(encoder, classifier, training_data, int(encoder.config["n_epochs"]), 10, 64,
                                       alpha=encoder.config["alpha"], verbose=True)
                         hebbnet_accuracy, _ = test(model, test_data, 256, device)
                         hebbnet_accuracies.append(hebbnet_accuracy)
+                        print(f"HebbNet-A accuracy: {hebbnet_accuracy:.2f}%\n")
 
                         # Train and evaluate the original SoftHebb network.
+                        print("Training the SoftHebb network...")
                         encoder = SoftHebbNet()
-                        classifier = Classifier(encoder.out_channels * (32 // 2 ** 3) ** 2, 10,
+                        classifier = Classifier(encoder.out_channels * (32 // 2 ** 3) ** 2, n_classes,
                                                 dropout=encoder.config["dropout"])
-                        model = train(encoder, classifier, train_data, int(encoder.config["n_epochs"]), 10, 64,
+                        model = train(encoder, classifier, training_data, int(encoder.config["n_epochs"]), 10, 64,
                                       alpha=encoder.config["alpha"], verbose=True)
                         softhebb_accuracy, _ = test(model, test_data, 256, device)
                         softhebb_accuracies.append(softhebb_accuracy)
+                        print(f"SoftHebb network accuracy: {softhebb_accuracy:.2f}%\n")
 
                         out.write(f"{hebbnet_accuracy},{softhebb_accuracy}\n")
             pickle.dump(hebbnet_accuracies, open(f"results/raw/cv_HebbNet_accuracies_{dataset}.pkl", 'wb'))
             pickle.dump(softhebb_accuracies, open(f"results/raw/cv_SoftHebb_accuracies_{dataset}.pkl", 'wb'))
 
+        hebbnet_accuracies = np.array(hebbnet_accuracies)
+        softhebb_accuracies = np.array(softhebb_accuracies)
+
         # Perform Bayesian analysis and record confidence intervals.
-        posterior = CorrelatedTTest(hebbnet_accuracies, softhebb_accuracies)
+        posterior = CorrelatedTTest(softhebb_accuracies, hebbnet_accuracies)
         t_parameters = posterior.df, posterior.mean, np.sqrt(posterior.var)
         levels = [0.9, 0.95, 0.99, 0.999]
         low, high = scipy.stats.t.interval(levels, *t_parameters)
@@ -372,8 +402,13 @@ def bayesian_analysis():
             for i in range(4):
                 out.write(f"{levels[i]},{low[i]},{high[i]}\n")
 
+        if dataset == 'CIFAR100':
+            params_cifar100 = t_parameters
+        else:
+            params_svhn = t_parameters
+
         # Plot posterior (default).
-        _ = posterior.plot(hebbnet_accuracies, softhebb_accuracies)
+        _ = posterior.plot()
         plt.savefig(f"results/posterior_{dataset}_default.png")
 
         # Plot posterior (custom).
@@ -388,6 +423,24 @@ def bayesian_analysis():
         ax.set_ylabel("Density")
         plt.savefig(f"results/posterior_{dataset}.png", dpi=400)
         plt.savefig(f"results/posterior_{dataset}.eps")
+
+    # Plot both posteriors in one graph.
+    _, ax = plt.subplots()
+    x = np.linspace(scipy.stats.t.ppf(0.001, *params_cifar100), scipy.stats.t.ppf(0.999, *params_cifar100), 1000)
+    y = scipy.stats.t.pdf(x, *params_cifar100)
+    lineplot(x=x, y=y, estimator=None, errorbar=None, ax=ax, legend="CIFAR-100")
+    ax.fill_between(x, y, color=ax.lines[0].get_color(), alpha=0.5)
+    x = np.linspace(scipy.stats.t.ppf(0.001, *params_svhn), scipy.stats.t.ppf(0.999, *params_svhn), 1000)
+    y = scipy.stats.t.pdf(x, *params_svhn)
+    lineplot(x=x, y=y, estimator=None, errorbar=None, ax=ax, legend="SVHN")
+    ax.fill_between(x, y, color=ax.lines[1].get_color(), alpha=0.5)
+    sns.set_theme(context="paper", style="ticks")
+    sns.despine()
+    ax.set_xlabel("Accuracy improvement")
+    ax.set_ylabel("Density")
+    ax.legend()
+    plt.savefig(f"results/posterior_{dataset}.png", dpi=400)
+    plt.savefig(f"results/posterior_{dataset}.eps")
 
 
 if __name__ == '__main__':

@@ -23,7 +23,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.data import DataLoader, Dataset
 
 from dataloader import load
-from models import Classifier, HebbNet, InceptionA, SoftHebbNet
+from models import Classifier, HebbNet, HebbNetA, SoftHebbNet
 
 
 def train(encoder: Module, classifier: Module, data: Dataset, n_epochs: int, encoder_batch: int, classifier_batch: int,
@@ -233,7 +233,7 @@ def test(model: Module, data: Dataset, batch_size: int, device: str, n_workers=0
 if __name__ == '__main__':
     # For command-line use.
     parser = ArgumentParser()
-    parser.add_argument('--model', choices=['SoftHebbSmall', 'InceptionA'], help="The model to be trained.")
+    parser.add_argument('--model', choices=['SoftHebb', 'HebbNet'], help="The model to be trained.")
     parser.add_argument('--dataset', choices=['CIFAR10'], help="The dataset to train and test on.")
     parser.add_argument('--n_epochs', type=int, help="The number of epochs for SGD training.")
     parser.add_argument('--hebb_batch', type=int, help="The batch size for Hebbian training.")
@@ -256,12 +256,12 @@ if __name__ == '__main__':
     train_data, test_data = load(args.dataset, fast=args.fast)
 
     # Get setup.
-    if args.model == 'SoftHebbSmall':
+    if args.model == 'SoftHebb':
         encoder_net = SoftHebbNet()
         in_features = int((initial_size / (2 ** 3)) ** 2 * 1536)
         classifier_net = Classifier(in_features=in_features, out_features=n_classes)
-    elif args.model == 'InceptionA':
-        encoder_net = InceptionA()
+    elif args.model == 'HebbNet':
+        encoder_net = HebbNetA()
         in_features = int((initial_size / (2 ** 3)) ** 2 * encoder_net.out_channels)
         classifier_net = Classifier(in_features=in_features, out_features=n_classes)
     else:

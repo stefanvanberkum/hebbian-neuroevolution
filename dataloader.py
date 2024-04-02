@@ -21,7 +21,7 @@ References
 """
 import torch
 from torch import Generator, tensor
-from torch.utils.data import ConcatDataset, random_split
+from torch.utils.data import random_split
 from torchvision.datasets import CIFAR10, CIFAR100, MNIST, SVHN
 from torchvision.transforms.v2 import Compose, Resize, ToDtype, ToImage
 from torchvision.transforms.v2.functional import resize
@@ -108,7 +108,7 @@ class FastSVHN(SVHN):
         self.targets = []
 
     def preprocess(self, device: str):
-        """Put both data and targets on device in advance and switch to (N, C, H, W) shape.
+        """Put both data and targets on device in advance.
 
         If put on GPU, the number of workers for the dataloaders should be set to zero (i.e., the main process).
 
@@ -117,7 +117,6 @@ class FastSVHN(SVHN):
 
         self.data = tensor(self.data, dtype=torch.float, device=device)
         self.targets = tensor(self.labels, device=device)
-        self.data = torch.movedim(self.data, -1, 1)
 
     def __getitem__(self, index):
         return self.data[index], self.targets[index]
@@ -191,20 +190,16 @@ def load(dataset: str, validation=False, fast=True, reduce=False, seed: int | No
         test = CIFAR100(path, train=False, transform=transform)
     elif dataset == 'SVHN' and fast:
         train = FastSVHN(path, split='train', download=True)
-        extra = FastSVHN(path, split='extra', download=True)
-        test = FastSVHN(path, split='test')
+        test = FastSVHN(path, split='test', download=True)
 
         # Preprocess data.
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
         train.preprocess(device)
         test.preprocess(device)
-        train = ConcatDataset([train, extra])
     elif dataset == 'SVHN':
         transform = Compose([ToImage(), ToDtype(torch.float)])
         train = SVHN(path, split='train', download=True, transform=transform)
-        extra = SVHN(path, split='extra', download=True, transform=transform)
         test = SVHN(path, split='test', transform=transform)
-        train = ConcatDataset([train, extra])
     else:
         raise RuntimeError(f"Dataset {dataset} not found (internal error).")
 
