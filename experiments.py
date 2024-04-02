@@ -67,11 +67,11 @@ def evaluate(model: str, mode: str, dataset: str):
             if model == "HebbNet" and mode == "Hebbian":
                 encoder = HebbNetA()
             elif model == "HebbNet" and mode == "BP":
-                encoder = BPNetA()  # Includes classifier.
+                encoder = BPNetA(out_features=n_classes)  # Includes classifier.
             elif model == "SoftHebb" and mode == "Hebbian":
                 encoder = SoftHebbNet()
             elif model == "SoftHebb" and mode == "BP":
-                encoder = SoftHebbBPNet()  # Includes classifier.
+                encoder = SoftHebbBPNet(out_features=n_classes)  # Includes classifier.
             else:
                 raise ValueError(f"The {mode} {model} model not found.")
             if mode == "Hebbian":

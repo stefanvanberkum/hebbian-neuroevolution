@@ -539,7 +539,7 @@ class HebbCellA(Module):
 class BPNetA(Module):
     """The backpropagation version of HebbNet-A."""
 
-    def __init__(self, in_channels: int = 3, config: dict | None = None):
+    def __init__(self, in_channels: int = 3, out_features: int = 10):
         super(BPNetA, self).__init__()
 
         # Initial 5x5 convolution.
@@ -560,6 +560,9 @@ class BPNetA(Module):
         self.out_channels = self.cell_2.out_channels
 
         self.pool = AvgPool2d(kernel_size=2, stride=2)
+        self.flatten = Flatten(start_dim=-3, end_dim=-1)
+        self.dropout = Dropout()
+        self.linear = Linear(self.out_channels * (32 // 2 ** 3) ** 2, out_features)
 
     def forward(self, x: Tensor):
         """Forward pass.
@@ -583,6 +586,11 @@ class BPNetA(Module):
 
         # Apply pooling.
         x = self.pool(x)
+
+        # Final classifier.
+        x = self.flatten(x)
+        x = self.dropout(x)
+        x = self.linear(x)
 
         return x
 
@@ -704,19 +712,27 @@ class SoftHebbNet(Module):
 class SoftHebbBPNet(Module):
     """The small backpropagation variant of the SoftHebb network for CIFAR-10."""
 
-    def __init__(self):
+    def __init__(self, out_features: int = 10):
         super(SoftHebbBPNet, self).__init__()
 
-        self.layer_1 = BNConvReLU(in_channels=3, out_channels=96, kernel_size=5)
+        c = 104
+
+        self.layer_1 = BNConvReLU(in_channels=3, out_channels=c, kernel_size=5)
         self.pool_1 = MaxPool2d(kernel_size=4, stride=2, padding=1)
-        self.layer_2 = BNConvReLU(in_channels=96, out_channels=384, kernel_size=3)
+
+        self.layer_2 = BNConvReLU(in_channels=c, out_channels=4 * c, kernel_size=3)
         self.pool_2 = MaxPool2d(kernel_size=4, stride=2, padding=1)
-        self.layer_3 = BNConvReLU(in_channels=384, out_channels=1536, kernel_size=3)
+
+        c *= 4
+        self.layer_3 = BNConvReLU(in_channels=c, out_channels=4 * c, kernel_size=3)
         self.pool_3 = AvgPool2d(kernel_size=2, stride=2)
+
+        c *= 4
+        self.out_channels = c
 
         self.flatten = Flatten(start_dim=-3, end_dim=-1)
         self.dropout = Dropout()
-        self.linear = Linear(1536 * (32 // 2 ** 3) ** 2, 10)
+        self.linear = Linear(self.out_channels * (32 // 2 ** 3) ** 2, out_features)
 
     def forward(self, x: Tensor):
         """Forward pass.
@@ -724,7 +740,7 @@ class SoftHebbBPNet(Module):
         Runs the sample through the network.
 
         :param x: Tensor of shape (N, 3, 32, 32) or (3, 32, 32).
-        :return: Output logits tensor of shape (N, 10) or (10).
+        :return: Output logits tensor of shape (N, out_features) or (out_features).
         """
 
         x = self.layer_1(x)
