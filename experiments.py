@@ -201,10 +201,11 @@ def summarize():
             out.write("Model,Mode,Mean,Standard deviation\n")
             for model in ['HebbNet', 'SoftHebb']:
                 for mode in ['Hebbian', 'BP']:
-                    accuracies = pickle.load(open(f"results/raw/accuracies_{dataset}_{mode}_{model}.pkl", 'rb'))
-                    mu = statistics.mean(accuracies)
-                    sigma = statistics.stdev(accuracies)
-                    out.write(f"{model},{mode},{mu},{sigma}\n")
+                    if mode == 'Hebbian' or dataset == 'CIFAR10':
+                        accuracies = pickle.load(open(f"results/raw/accuracies_{dataset}_{mode}_{model}.pkl", 'rb'))
+                        mu = statistics.mean(accuracies)
+                        sigma = statistics.stdev(accuracies)
+                        out.write(f"{model},{mode},{mu},{sigma}\n")
 
 
 def visualize():
@@ -416,9 +417,9 @@ def bayesian_analysis():
         y = scipy.stats.t.pdf(x, *t_parameters)
         _, ax = plt.subplots()
         lineplot(x=x, y=y, estimator=None, errorbar=None, ax=ax)
+        ax.fill_between(x, y, color=ax.lines[0].get_color(), alpha=0.5)
         sns.set_theme(context="paper", style="ticks")
         sns.despine()
-        ax.fill_between(x, y, color=ax.lines[0].get_color(), alpha=0.5)
         ax.set_xlabel("Accuracy improvement")
         ax.set_ylabel("Density")
         plt.savefig(f"results/posterior_{dataset}.png", dpi=400)
@@ -426,21 +427,21 @@ def bayesian_analysis():
 
     # Plot both posteriors in one graph.
     _, ax = plt.subplots()
-    x = np.linspace(scipy.stats.t.ppf(0.001, *params_cifar100), scipy.stats.t.ppf(0.999, *params_cifar100), 1000)
+    x = np.linspace(scipy.stats.t.ppf(0.000001, *params_cifar100), 0, 5000)
     y = scipy.stats.t.pdf(x, *params_cifar100)
-    lineplot(x=x, y=y, estimator=None, errorbar=None, ax=ax, legend="CIFAR-100")
+    lineplot(x=x, y=y, estimator=None, errorbar=None, ax=ax, label="CIFAR-100")
     ax.fill_between(x, y, color=ax.lines[0].get_color(), alpha=0.5)
-    x = np.linspace(scipy.stats.t.ppf(0.001, *params_svhn), scipy.stats.t.ppf(0.999, *params_svhn), 1000)
+    x = np.linspace(0, scipy.stats.t.ppf(0.999999, *params_svhn), 5000)
     y = scipy.stats.t.pdf(x, *params_svhn)
-    lineplot(x=x, y=y, estimator=None, errorbar=None, ax=ax, legend="SVHN")
+    lineplot(x=x, y=y, estimator=None, errorbar=None, ax=ax, label="SVHN")
     ax.fill_between(x, y, color=ax.lines[1].get_color(), alpha=0.5)
     sns.set_theme(context="paper", style="ticks")
     sns.despine()
     ax.set_xlabel("Accuracy improvement")
     ax.set_ylabel("Density")
     ax.legend()
-    plt.savefig(f"results/posterior_{dataset}.png", dpi=400)
-    plt.savefig(f"results/posterior_{dataset}.eps")
+    plt.savefig(f"results/posteriors.png", dpi=400)
+    plt.savefig(f"results/posteriors.eps")
 
 
 if __name__ == '__main__':

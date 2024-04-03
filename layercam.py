@@ -81,9 +81,11 @@ class LayerCAM:
 
         # Scale CAM.
         cam = cam - np.min(cam)
-        cam = cam / (1e-7 + np.max(cam))
+        cam = cam if np.max(cam) == 0 else cam / np.max(cam)
         cam = Image.fromarray(cam.squeeze()).resize(target_size)
         cam = np.asarray(cam)
+        cam = cam - np.min(cam)
+        cam = cam if np.max(cam) == 0 else cam / np.max(cam)
         return cam
 
     def visualize(self, input_tensor: torch.Tensor, label: int, path: str):
