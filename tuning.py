@@ -220,30 +220,10 @@ def tune(model: str):
         :return: The search space.
         """
 
-        '''old
-        return {"eta": hp.loguniform(f"{name}/eta", log(1e-4), log(1)),
-                "tau": hp.loguniform(f"{name}/tau", log(0.01), log(10)), 
-                "p": hp.loguniform(f"{name}/p", log(0.1), log(2))}
-        '''
         return {"eta": hp.loguniform(f"{name}/eta", log(1e-4), log(1)),
                 "tau_inv": hp.uniform(f"{name}/tau_inv", 0.1, 2), "p": hp.uniform(f"{name}/p", 0.1, 2)}
 
     if model == "HebbNet":
-        '''old
-        search_space = {"n_channels": hp.quniform("n_channels", 8, 40, 2),
-                        "alpha": hp.loguniform("alpha", log(1e-4), log(1)), "dropout": hp.uniform("dropout", 0, 1),
-                        "n_epochs": hp.quniform("n_epochs", 1, 50, 1), "initial_conv": conv_config("initial_conv"),
-                        "cell_1": {"pre_skip": conv_config("cell_1/pre_skip"),
-                                   "conv_skip": conv_config("cell_1/conv_skip"),
-                                   "conv_1_add": conv_config("cell_1/conv_1_add"),
-                                   "conv_1_cat": conv_config("cell_1/conv_1_cat"),
-                                   "dil_conv_5": conv_config("cell_1/dil_conv_5")},
-                        "cell_2": {"pre_skip": conv_config("cell_2/pre_skip"),
-                                   "conv_skip": conv_config("cell_2/conv_skip"),
-                                   "conv_1_add": conv_config("cell_2/conv_1_add"),
-                                   "conv_1_cat": conv_config("cell_2/conv_1_cat"),
-                                   "dil_conv_5": conv_config("cell_2/dil_conv_5")}}
-        '''
         search_space = {"n_channels": hp.quniform("n_channels", 8, 40, 2),
                         "alpha": hp.loguniform("alpha", log(1e-4), log(1)), "dropout": hp.uniform("dropout", 0, 1),
                         "n_epochs": hp.quniform("n_epochs", 1, 50, 1), "conv_1": conv_config("conv_1"),
@@ -330,11 +310,8 @@ def tune_ray(model: str):
 
     if model == "HebbNet":
         search_space = {"n_channels": quniform(8, 40, 2), "alpha": loguniform(1e-4, 1), "dropout": uniform(0, 1),
-                        "n_epochs": quniform(1, 50, 1), "initial_conv": conv_config(),
-                        "cell_1": {"pre_skip": conv_config(), "conv_skip": conv_config(), "conv_1_add": conv_config(),
-                                   "conv_1_cat": conv_config(), "dil_conv_5": conv_config()},
-                        "cell_2": {"pre_skip": conv_config(), "conv_skip": conv_config(), "conv_1_add": conv_config(),
-                                   "conv_1_cat": conv_config(), "dil_conv_5": conv_config()}}
+                        "n_epochs": quniform(1, 50, 1), "conv_1": conv_config(), "conv_2": conv_config(),
+                        "conv_3": conv_config()}
     elif model == "SoftHebb":
         search_space = {"n_channels": quniform(32, 160, 8), "alpha": loguniform(1e-4, 1), "dropout": uniform(0, 1),
                         "n_epochs": quniform(1, 50, 1), "conv_1": conv_config(), "conv_2": conv_config(),

@@ -68,7 +68,7 @@ python experiments.py --bayesian
 
 Arguments:
 
-- --model: The model to test, one of: {HebbNet, SoftHebb, NoSkip}.
+- --model: The model to test, one of: {HebbNet, SoftHebb}.
 - --mode: The training mode to be applied, one of: {Hebbian, BP}.
 - --CIFAR10: Turn on this option to test on CIFAR-10.
 - --CIFAR100: Turn on this option to test on CIFAR-100.

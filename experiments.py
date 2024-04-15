@@ -410,7 +410,7 @@ def bayesian_analysis():
 
         # Plot posterior (default).
         _ = posterior.plot()
-        plt.savefig(f"results/posterior_{dataset}_default.png")
+        plt.savefig(f"results/posterior_{dataset}_default.png", bbox_inches="tight", pad_inches=0)
 
         # Plot posterior (custom).
         x = np.linspace(scipy.stats.t.ppf(0.001, *t_parameters), scipy.stats.t.ppf(0.999, *t_parameters), 1000)
@@ -422,8 +422,8 @@ def bayesian_analysis():
         sns.despine()
         ax.set_xlabel("Accuracy improvement")
         ax.set_ylabel("Density")
-        plt.savefig(f"results/posterior_{dataset}.png", dpi=400)
-        plt.savefig(f"results/posterior_{dataset}.eps")
+        plt.savefig(f"results/posterior_{dataset}.png", bbox_inches="tight", pad_inches=0, dpi=400)
+        plt.savefig(f"results/posterior_{dataset}.eps", bbox_inches="tight", pad_inches=0)
 
     # Plot both posteriors in one graph.
     _, ax = plt.subplots()
@@ -440,14 +440,14 @@ def bayesian_analysis():
     ax.set_xlabel("Accuracy improvement")
     ax.set_ylabel("Density")
     ax.legend()
-    plt.savefig(f"results/posteriors.png", dpi=400)
-    plt.savefig(f"results/posteriors.eps")
+    plt.savefig(f"results/posteriors.png", bbox_inches="tight", pad_inches=0, dpi=400)
+    plt.savefig(f"results/posteriors.eps", bbox_inches="tight", pad_inches=0)
 
 
 if __name__ == '__main__':
     # For command-line use.
     parser = ArgumentParser()
-    parser.add_argument('--model', choices=['HebbNet', 'SoftHebb', 'NoSkip'], help="The model to test.")
+    parser.add_argument('--model', choices=['HebbNet', 'SoftHebb'], help="The model to test.")
     parser.add_argument('--mode', choices=['Hebbian', 'BP'], help="The training mode to be applied.")
     parser.add_argument('--CIFAR10', action=BooleanOptionalAction, help="Turn on this option to test on CIFAR-10.")
     parser.add_argument('--CIFAR100', action=BooleanOptionalAction, help="Turn on this option to test on CIFAR-100.")
