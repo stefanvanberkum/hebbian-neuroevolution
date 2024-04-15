@@ -29,7 +29,6 @@ class OpSet(StrEnum):
     MAX_POOL_3 = auto()  # 3x3 max pooling.
     CONV_1 = auto()  # 1x1 Hebbian convolution.
     CONV_3 = auto()  # 3x3 Hebbian convolution.
-    CONV_5 = auto()  # 5x5 Hebbian convolution.
     CONV_13_31 = auto()  # 1x3 and then 3x1 Hebbian convolution.
     DILATED_CONV_5 = auto()  # 5x5 dilated Hebbian convolution (i.e., 3x3 with dilation=2).
 
