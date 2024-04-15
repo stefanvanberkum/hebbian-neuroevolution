@@ -11,7 +11,7 @@ import pickle
 from copy import deepcopy
 from enum import StrEnum, auto, unique
 from os import makedirs
-from os.path import exists, join
+from os.path import exists, join, splitext
 from shutil import rmtree
 
 from networkx import MultiDiGraph, get_edge_attributes, set_edge_attributes, topological_generations
@@ -35,39 +35,47 @@ class OpSet(StrEnum):
 
 
 class Architecture:
-    """An architecture defined by a normal cell and a reduction cell.
+    """An architecture defined by a reduction cell and a set of hyperparameters.
 
     Calling the constructor generates a random architecture.
 
     :ivar identifier: The architecture's identifier.
-    :ivar normal: True if the architecture includes a normal cell.
-    :ivar normal_cell: The architecture's normal cell (if ``normal`` is True).
-    :ivar reduction cell: The architecture's reduction cell.
+    :ivar cell: The architecture's reduction cell.
+    :ivar params: The set of hyperparameters.
     :ivar parent: The architecture's parent (identifier).
     """
 
-    def __init__(self, identifier: int, n_ops=4, normal=True):
+    def __init__(self, identifier: int, n_ops=5, n_reduction=2):
         """Generate a random architecture.
 
         :param identifier: The architecture's identifier.
-        :param n_ops: The number of pairwise operations in each cell.
-        :param normal: True if the architecture should include a normal cell.
+        :param n_ops: The number of pairwise operations in each cell (default: 5).
+        :param n_reduction: The number of reduction cells (default: 2).
         """
 
         self.identifier = identifier
-        self.normal = normal
 
-        # Randomly initialize cells.
-        if self.normal:
-            self.normal_cell = Cell(n_ops=n_ops)
-        self.reduction_cell = Cell(n_ops=n_ops)
+        # Randomly initialize the cell.
+        self.cell = Cell(n_ops=n_ops)
+
+        # Generate a random set of hyperparameters for each cell.
+        self.params = {cell: {} for cell in range(n_reduction)}
+        ops = get_edge_attributes(self.cell, 'op')
+        rng = default_rng()
+        for cell in range(n_reduction):
+            for op in ops:
+                if "conv" in ops[op]:
+                    # Generate a set of random hyperparameters.
+                    self.params[cell][op] = {"eta": max(0.0, rng.normal(0.05, 0.015)),  # Roughly 0-0.1.
+                                             "tau_inv": max(0.0, rng.normal(0.5, 0.15)),  # Roughly 0-1.
+                                             "p": max(0.0, rng.normal(1, 0.2))}  # Roughly 0.25-1.75
 
         self.parent = None
 
     def mutate(self, identifier: int):
         """Generate a randomly mutated copy of this architecture.
 
-        With equal probability, this randomly mutates either the normal cell or reduction cell.
+        With equal probability, this randomly mutates either the reduction cell or the hyperparameters.
 
         :param identifier: The child's identifier.
         :return: The child architecture.
@@ -196,3 +204,12 @@ class Cell(MultiDiGraph):
         graph = to_agraph(self)
         graph.layout(prog='dot')
         graph.draw(path)
+
+        # Add edge index as edge label.
+        indices = {key: key for key in ops}
+        set_edge_attributes(self, indices, name='label')
+
+        graph = to_agraph(self)
+        graph.layout(prog='dot')
+        filepath, extension = splitext(path)
+        graph.draw(filepath + "_map" + extension)

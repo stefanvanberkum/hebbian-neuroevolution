@@ -25,9 +25,8 @@ from models import Classifier, HebbianEncoder
 from training import test, train
 
 
-def evolve(dataset='CIFAR10', n_channels=8, scaling_factor=4, n_ops=5, stack_size=0, n_reduction=2, n_epochs=10,
-           generations=100, eta=0.01, encoder_batch=32, classifier_batch=256, reduce=False, verbose=False,
-           checkpoint=None):
+def evolve(dataset='CIFAR10', n_channels=8, scaling_factor=4, n_ops=5, n_reduction=2, n_epochs=10, generations=100,
+           eta=0.01, encoder_batch=32, classifier_batch=256, verbose=False, checkpoint=None):
     """Evolve a Hebbian encoder.
 
     If the stack size is set to zero, a sequence of ``n_reduction`` reduction cells is used. Otherwise, alternating
@@ -37,14 +36,12 @@ def evolve(dataset='CIFAR10', n_channels=8, scaling_factor=4, n_ops=5, stack_siz
     :param n_channels: The initial number of channels (default: 8).
     :param scaling_factor: The scaling factor for the number of filters after each reduction cell (default: 4).
     :param n_ops: The number of operations in each cell (default: 5).
-    :param stack_size: The normal cell stack size (default: 0).
-    :param n_reduction: The number of reduction cells, used if ``stack_size`` is set to zero (default: 2).
+    :param n_reduction: The number of reduction cells (default: 2).
     :param n_epochs: The epoch increment for training the classifier (default: 10).
     :param generations: The number of generations (default 100).
     :param eta: The base learning rate used in SoftHebb convolutions (default: 0.01).
     :param encoder_batch: The batch size for training the encoder's SoftHebb convolutions (default: 32).
     :param classifier_batch: The batch size for training the classifier with SGD (default: 256).
-    :param reduce: True if the spatial size of the input images should be reduced to 16x16 (default: False).
     :param verbose: True if info should be printed (default: False).
     :param checkpoint: Optional checkpoint name to continue evolution.
     """
@@ -55,7 +52,7 @@ def evolve(dataset='CIFAR10', n_channels=8, scaling_factor=4, n_ops=5, stack_siz
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     # Load reduced dataset.
-    training, validation, _ = load(dataset, validation=True, reduce=reduce)
+    training, validation, _ = load(dataset, validation=True)
     in_channels = 3 if (dataset == 'CIFAR10') else 1
     n_classes = 10
 
@@ -119,11 +116,8 @@ def evolve(dataset='CIFAR10', n_channels=8, scaling_factor=4, n_ops=5, stack_siz
         """
 
         # Train and compute validation accuracy.
-        encoder = HebbianEncoder(in_channels, arch, n_channels, stack_size, eta, scaling_factor, n_reduction)
-        if stack_size == 0:
-            classifier = Classifier(encoder.out_channels * (32 // 2 ** 3) ** 2, n_classes)
-        else:
-            classifier = Classifier(encoder.out_channels, n_classes)
+        encoder = HebbianEncoder(in_channels, arch, n_channels, n_reduction, eta, scaling_factor)
+        classifier = Classifier(encoder.out_channels * (32 // 2 ** 3) ** 2, n_classes)
 
         # Check if a checkpoint exists.
         encoder_path = join(arch_path, str(identifier), "encoder.pt")
@@ -191,11 +185,7 @@ def evolve(dataset='CIFAR10', n_channels=8, scaling_factor=4, n_ops=5, stack_siz
             print(progress_bar, file=log_file)
 
             # Generate architecture and add to subpopulation one.
-            if stack_size == 0:
-                # No normal cell.
-                architecture = Architecture(identifier=step, n_ops=n_ops, normal=False)
-            else:
-                architecture = Architecture(identifier=step, n_ops=n_ops)
+            architecture = Architecture(identifier=step, n_ops=n_ops)
             architecture.save(arch_path)
             train_and_evaluate(architecture, step)
             P_1.add(step)
@@ -258,18 +248,32 @@ def evolve(dataset='CIFAR10', n_channels=8, scaling_factor=4, n_ops=5, stack_siz
                     f"{accuracies[winner]:.2f}%.", sys.stderr, log_file)
 
         # Remove deceased architectures.
-        n_new = 5 * ((len(P_1) > 0) + (len(P_2) > 0) + (len(P_3) > 0))  # Five new architectures for each non-empty set.
-        for architecture in range(oldest, oldest + n_new):
-            for subpopulation in [P_1, P_2, P_3]:
-                if architecture in subpopulation:
-                    subpopulation.remove(architecture)
-                    remove(join(arch_path, str(architecture), "encoder.pt"))
-                    remove(join(arch_path, str(architecture), "classifier.pt"))
-                    remove(join(arch_path, str(architecture), "training_state.pt"))
+        if generation == 9:
+            # Remove the initial random architectures.
+            for architecture in range(0, 60):
+                for subpopulation in [P_1, P_2, P_3]:
+                    if architecture in subpopulation:
+                        subpopulation.remove(architecture)
+                        remove(join(arch_path, str(architecture), "encoder.pt"))
+                        remove(join(arch_path, str(architecture), "classifier.pt"))
+                        remove(join(arch_path, str(architecture), "training_state.pt"))
+            oldest += 60
 
-        if verbose:
-            log(f"[INFO] Deceased architectures: {oldest}--{oldest + n_new}", sys.stderr, log_file)
-        oldest += n_new
+            if verbose:
+                log(f"[INFO] Deceased architectures: {0}--{59}", sys.stderr, log_file)
+        if generation > 9:
+            # Remove the oldest 15 architectures.
+            for architecture in range(oldest, oldest + 15):
+                for subpopulation in [P_1, P_2, P_3]:
+                    if architecture in subpopulation:
+                        subpopulation.remove(architecture)
+                        remove(join(arch_path, str(architecture), "encoder.pt"))
+                        remove(join(arch_path, str(architecture), "classifier.pt"))
+                        remove(join(arch_path, str(architecture), "training_state.pt"))
+
+            if verbose:
+                log(f"[INFO] Deceased architectures: {oldest}--{oldest + 14}", sys.stderr, log_file)
+            oldest += 15
 
         # Save checkpoint.
         ckpt = (rng, P_1, P_2, P_3, P_3_history, accuracies, max_accuracies, generation, step, oldest)
@@ -338,9 +342,7 @@ if __name__ == '__main__':
     parser.add_argument('--scaling_factor', type=int, default=4,
                         help="The scaling factor for the number of filters after each reduction cell (default: 4).")
     parser.add_argument('--n_ops', type=int, default=5, help="The number of operations in each cell (default: 5).")
-    parser.add_argument('--stack_size', type=int, default=0, help="The normal cell stack size (default: 0).")
-    parser.add_argument('--n_reduction', type=int, default=2,
-                        help="The number of reduction cells, used if ``stack_size`` is set to zero (default: 3).")
+    parser.add_argument('--n_reduction', type=int, default=2, help="The number of reduction cells (default: 3).")
     parser.add_argument('--n_epochs', type=int, default=10, help="The epoch increment for training the classifier ("
                                                                  "default: 10).")
     parser.add_argument('--generations', type=int, default=100, help="The number of generations (default 100).")
@@ -350,12 +352,9 @@ if __name__ == '__main__':
                         help="The batch size for training the encoder's SoftHebb convolutions (default: 32).")
     parser.add_argument('--classifier_batch', type=int, default=256,
                         help="The batch size for training the classifier with SGD (default: 256).")
-    parser.add_argument('--reduce', action=BooleanOptionalAction, help="Turn on this option to reduce the spatial "
-                                                                       "dimension of the input images to 16x16.")
     parser.add_argument('--verbose', action=BooleanOptionalAction, help="Turn on this option for verbose info.")
     parser.add_argument('--checkpoint', type=str, default=None, help="Optional checkpoint name to continue evolution.")
     args = parser.parse_args()
 
-    evolve(args.dataset, args.n_channels, args.scaling_factor, args.n_ops, args.stack_size, args.n_reduction,
-           args.n_epochs, args.generations, args.eta, args.encoder_batch, args.classifier_batch, args.reduce,
-           args.verbose, args.checkpoint)
+    evolve(args.dataset, args.n_channels, args.scaling_factor, args.n_ops, args.n_reduction, args.n_epochs,
+           args.generations, args.eta, args.encoder_batch, args.classifier_batch, args.verbose, args.checkpoint)
