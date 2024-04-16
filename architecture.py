@@ -58,17 +58,24 @@ class Architecture:
         # Randomly initialize the cell.
         self.cell = Cell(n_ops=n_ops)
 
-        # Generate a random set of hyperparameters for each cell.
-        self.params = {cell: {} for cell in range(n_reduction)}
-        ops = get_edge_attributes(self.cell, 'op')
+        # Generate a random set of hyperparameters for the initial convolution and each cell.
+        self.params = {cell: {} for cell in range(n_reduction + 1)}
+
         rng = default_rng()
-        for cell in range(n_reduction):
+        self.params[0] = {"eta": max(0.0, rng.normal(0.05, 0.015)),  # Roughly 0-0.1.
+                          "tau_inv": max(0.0, rng.normal(0.5, 0.15)),  # Roughly 0-1.
+                          "p": max(0.0, rng.normal(1, 0.2))}  # Roughly 0.25-1.75.
+
+        ops = get_edge_attributes(self.cell, 'op')
+        for layer in range(1, n_reduction + 1):
             for op in ops:
                 if "conv" in ops[op]:
                     # Generate a set of random hyperparameters.
-                    self.params[cell][op] = {"eta": max(0.0, rng.normal(0.05, 0.015)),  # Roughly 0-0.1.
-                                             "tau_inv": max(0.0, rng.normal(0.5, 0.15)),  # Roughly 0-1.
-                                             "p": max(0.0, rng.normal(1, 0.2))}  # Roughly 0.25-1.75
+                    self.params[layer][op] = {"eta": max(0.0, rng.normal(0.05, 0.015)),  # Roughly 0-0.1.
+                                              "tau_inv": max(0.0, rng.normal(0.5, 0.15)),  # Roughly 0-1.
+                                              "p": max(0.0, rng.normal(1, 0.2))}  # Roughly 0.25-1.75.
+
+        # TODO: Randomly initialize the learning rate and dropout for the final layer.
 
         self.parent = None
 

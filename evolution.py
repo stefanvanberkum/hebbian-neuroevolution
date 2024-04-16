@@ -25,8 +25,8 @@ from models import Classifier, HebbianEncoder
 from training import test, train
 
 
-def evolve(dataset='CIFAR10', n_channels=8, scaling_factor=4, n_ops=5, n_reduction=2, n_epochs=10, generations=100,
-           eta=0.01, encoder_batch=32, classifier_batch=256, verbose=False, checkpoint=None):
+def evolve(dataset='CIFAR10', scaling_factor=4, n_ops=5, n_reduction=2, cycles=100, eta=0.01, encoder_batch=32,
+           classifier_batch=256, verbose=False, checkpoint=None):
     """Evolve a Hebbian encoder.
 
     If the stack size is set to zero, a sequence of ``n_reduction`` reduction cells is used. Otherwise, alternating
