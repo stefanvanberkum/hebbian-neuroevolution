@@ -40,43 +40,64 @@ class Architecture:
     Calling the constructor generates a random architecture.
 
     :ivar identifier: The architecture's identifier.
-    :ivar cell: The architecture's reduction cell.
+    :ivar cell_1: The architecture's first reduction cell.
+    :ivar cell_2: The architecture's second reduction cell.
     :ivar params: The set of hyperparameters.
     :ivar parent: The architecture's parent (identifier).
     """
 
-    def __init__(self, identifier: int, n_ops=5, n_reduction=2):
+    def __init__(self, identifier: int, n_ops=5):
         """Generate a random architecture.
 
         :param identifier: The architecture's identifier.
         :param n_ops: The number of pairwise operations in each cell (default: 5).
-        :param n_reduction: The number of reduction cells (default: 2).
         """
 
         self.identifier = identifier
 
-        # Randomly initialize the cell.
-        self.cell = Cell(n_ops=n_ops)
+        # TODO: Separately evolve the two cells. Run for twice as long (0.5 * 0.5 chance of mutating a cell, i.e.,
+        #  half of what it was in the original). 50-50 between hyperparameters/architecture. 33-33-33 between layers if
+        #  hyperparameters, 50-50 between cells if architecture. Still do 8 channels and scale up afterward. Keep
+        #  learning rate and dropout to default (perhaps tune afterward).
 
-        # Generate a random set of hyperparameters for the initial convolution and each cell.
-        self.params = {cell: {} for cell in range(n_reduction + 1)}
+        # Randomly initialize the cells.
+        self.cell_1 = Cell(n_ops=n_ops)
+        self.cell_2 = Cell(n_ops=n_ops)
 
+        self.params = {}
         rng = default_rng()
-        self.params[0] = {"eta": max(0.0, rng.normal(0.05, 0.015)),  # Roughly 0-0.1.
-                          "tau_inv": max(0.0, rng.normal(0.5, 0.15)),  # Roughly 0-1.
-                          "p": max(0.0, rng.normal(1, 0.2))}  # Roughly 0.25-1.75.
 
-        ops = get_edge_attributes(self.cell, 'op')
-        for layer in range(1, n_reduction + 1):
-            for op in ops:
-                if "conv" in ops[op]:
-                    # Generate a set of random hyperparameters.
-                    self.params[layer][op] = {"eta": max(0.0, rng.normal(0.05, 0.015)),  # Roughly 0-0.1.
-                                              "tau_inv": max(0.0, rng.normal(0.5, 0.15)),  # Roughly 0-1.
-                                              "p": max(0.0, rng.normal(1, 0.2))}  # Roughly 0.25-1.75.
+        def random_params():
+            """Generate a set of random hyperparameters for a convolution.
 
-        # TODO: Randomly initialize the learning rate and dropout for the final layer.
+            :return: A random set of hyperparameters.
+            """
 
+            params = {"eta": max(0.0, rng.normal(0.05, 0.015)),  # Roughly 0-0.1.
+                      "tau_inv": max(0.0, rng.normal(0.5, 0.15)),  # Roughly 0-1.
+                      "p": max(0.0, rng.normal(1, 0.2))}  # Roughly 0.25-1.75.
+            return params
+
+        # Generate a random set of hyperparameters for the initial convolution.
+        self.params["initial_conv"] = random_params()
+
+        # Generate a random set of hyperparameters for the first reduction cell.
+        ops = get_edge_attributes(self.cell_1, 'op')
+        self.params["cell_1"] = {}
+        self.params["cell_1"]["skip_conv"] = random_params()
+        for op in ops:
+            if "conv" in ops[op]:
+                # Generate a set of random hyperparameters.
+                self.params["cell_1"][op] = random_params()
+
+        # Generate a random set of hyperparameters for the second reduction cell.
+        ops = get_edge_attributes(self.cell_2, 'op')
+        self.params["cell_2"] = {}
+        self.params["cell_2"]["skip_conv"] = random_params()
+        for op in ops:
+            if "conv" in ops[op]:
+                # Generate a set of random hyperparameters.
+                self.params["cell_2"][op] = random_params()
         self.parent = None
 
     def mutate(self, identifier: int):

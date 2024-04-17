@@ -25,35 +25,29 @@ from models import Classifier, HebbianEncoder
 from training import test, train
 
 
-def evolve(dataset='CIFAR10', scaling_factor=4, n_ops=5, n_reduction=2, cycles=100, eta=0.01, encoder_batch=32,
+def evolve(n_channels=8, scaling_factor=4, n_ops=5, n_epochs=10, generations=200, eta=0.01, encoder_batch=10,
            classifier_batch=256, verbose=False, checkpoint=None):
     """Evolve a Hebbian encoder.
 
-    If the stack size is set to zero, a sequence of ``n_reduction`` reduction cells is used. Otherwise, alternating
-    stacks of normal cells and single reduction cells are used in the order N-R-N-R-N.
+    The encoder comprises an initial convolution and two reduction cells.
 
-    :param dataset: The dataset to use for evolution (default: CIFAR10). One of: {MNIST, CIFAR10}.
     :param n_channels: The initial number of channels (default: 8).
     :param scaling_factor: The scaling factor for the number of filters after each reduction cell (default: 4).
     :param n_ops: The number of operations in each cell (default: 5).
-    :param n_reduction: The number of reduction cells (default: 2).
     :param n_epochs: The epoch increment for training the classifier (default: 10).
-    :param generations: The number of generations (default 100).
+    :param generations: The number of generations (default: 200).
     :param eta: The base learning rate used in SoftHebb convolutions (default: 0.01).
-    :param encoder_batch: The batch size for training the encoder's SoftHebb convolutions (default: 32).
+    :param encoder_batch: The batch size for training the encoder's SoftHebb convolutions (default: 10).
     :param classifier_batch: The batch size for training the classifier with SGD (default: 256).
     :param verbose: True if info should be printed (default: False).
     :param checkpoint: Optional checkpoint name to continue evolution.
     """
 
-    if dataset not in {'MNIST', 'CIFAR10'}:
-        raise ValueError("Dataset not supported, should be one of {MNIST, CIFAR10}, received:", f"{dataset}")
-
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-    # Load reduced dataset.
-    training, validation, _ = load(dataset, validation=True)
-    in_channels = 3 if (dataset == 'CIFAR10') else 1
+    # Load dataset.
+    training, validation, _ = load("CIFAR10", validation=True)
+    in_channels = 3
     n_classes = 10
 
     def log(message: str, console: TextIO, file: TextIO):
@@ -116,7 +110,7 @@ def evolve(dataset='CIFAR10', scaling_factor=4, n_ops=5, n_reduction=2, cycles=1
         """
 
         # Train and compute validation accuracy.
-        encoder = HebbianEncoder(in_channels, arch, n_channels, n_reduction, eta, scaling_factor)
+        encoder = HebbianEncoder(in_channels, arch, n_channels, scaling_factor)
         classifier = Classifier(encoder.out_channels * (32 // 2 ** 3) ** 2, n_classes)
 
         # Check if a checkpoint exists.

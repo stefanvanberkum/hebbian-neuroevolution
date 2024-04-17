@@ -60,41 +60,41 @@ class HebbNet(Module):
 class HebbianEncoder(Module):
     """Generic modular Hebbian encoder network used for evolution.
 
-    This network is constructed using evolved cells, comprising a sequence of ``n_reduction`` reduction cells.
+    This network is constructed using the two evolved reduction cells.
 
     :param in_channels: The number of input channels.
     :param architecture: An evolved architecture.
-    :param n_channels: The initial number of channels (doubled after each reduction layer).
-    :param n_reduction: Number of reduction layers.
-    :param eta: The base learning rate used in SoftHebb convolutions.
-    :param scaling_factor: The scaling factor for the number of filters (default: 2).
+    :param n_channels: The initial number of channels (doubled after the initial layer and first cell).
+    :param scaling_factor: The scaling factor for the number of filters (default: 4).
     """
 
-    def __init__(self, in_channels: int, architecture: Architecture, n_channels: int, n_reduction: int, eta: float,
-                 scaling_factor=4):
+    def __init__(self, in_channels: int, architecture: Architecture, n_channels: int, eta: float, scaling_factor=4):
         super(HebbianEncoder, self).__init__()
 
+        params = architecture.params
+
+        # Initial convolution.
         out_channels = n_channels
-        self.initial_conv = BNConvTriangle(in_channels, out_channels, kernel_size=5, eta=eta)
+        eta, tau, p = params["initial_conv"]["eta"], 1 / params["initial_conv"]["tau_inv"], params["initial_conv"]["p"]
+        self.initial_conv = BNConvTriangle(in_channels, out_channels, kernel_size=5, eta=eta, temp=tau, p=p)
         skip_channels = in_channels  # The next skip input is the current input.
         in_channels = out_channels
         out_channels *= scaling_factor  # Scale the number of filters.
 
-        reduction_cell = architecture.reduction_cell
+        # First reduction.
+        self.cell_1 = HebbianCell(architecture.cell_1, in_channels, skip_channels, out_channels, params["cell_1"],
+                                  stride=2)
 
-        self.cells = ModuleList()
-        for n in range(n_reduction):
-            if n == 0:
-                # First reduction.
-                cell = HebbianCell(reduction_cell, in_channels, skip_channels, out_channels, eta, stride=2)
-            else:
-                cell = HebbianCell(reduction_cell, in_channels, skip_channels, out_channels, eta, stride=2,
-                                   follows_reduction=True)
-            self.cells.append(cell)
-            skip_channels = in_channels  # The next skip input is the current input.
-            in_channels = cell.out_channels  # The next direct input is the current output.
-            out_channels *= scaling_factor  # Scale the number of filters.
-        self.out_channels = in_channels  # Record the final number of output channels.
+        skip_channels = in_channels  # The next skip input is the current input.
+        in_channels = self.cell_1.out_channels  # The next direct input is the current output.
+        out_channels *= scaling_factor  # Scale the number of filters.
+
+        # Second reduction.
+        self.cell_2 = HebbianCell(architecture.cell_2, in_channels, skip_channels, out_channels, params["cell_2"],
+                                  stride=2, follows_reduction=True)
+
+        # Final average pooling.
+        self.out_channels = self.cell_2.out_channels  # Record the final number of output channels.
         self.pool = AvgPool2d(kernel_size=2, stride=2)
 
     @torch.no_grad()
@@ -110,15 +110,16 @@ class HebbianEncoder(Module):
         # Apply initial convolution.
         x = self.initial_conv(x)
 
-        # Run input through the cells.
-        for cell in self.cells:
-            x_next = cell(x_skip, x)
-            x_skip = x
-            x = x_next
+        # Run input through the first reduction cell.
+        x_next = self.cell_1(x_skip, x)
+        x_skip = x
+        x = x_next
 
-        if self.pool is not None:
-            # Apply pooling.
-            x = self.pool(x)
+        # Run input through the second reduction cell.
+        x = self.cell_2(x_skip, x)
+
+        # Apply pooling.
+        x = self.pool(x)
 
         return x
 
@@ -127,28 +128,19 @@ class HebbianCell(Module):
     """Hebbian cell built from a network cell.
 
     If this cell follows a reduction cell, the spatial shape of the skip input is reduced using a strided 3x3
-    convolution. Otherwise, if the number of skip input channels differs from the number of output channels,
-    a regular 3x3 convolution is used to preprocess the skip input. Whenever the number of channels between two
-    elements of a pairwise operation is not equal, zero padding is applied to remedy this.
+    convolution. Otherwise, a regular 3x3 convolution is used to preprocess the skip input. Whenever the number of
+    channels between two elements of a pairwise operation is not equal, zero padding is applied to remedy this.
 
     :param cell: The cell.
     :param in_channels: The number of input channels.
     :param out_channels: The number of output channels.
-    :param eta: The base learning rate used in SoftHebb convolutions.
+    :param params: A dictionary with a learning rate, temperature, and RePU power for each convolution.
     :param stride: The stride to be used for the operation (default: 1).
     :param follows_reduction: True if this cell follows a reduction cell (default: False).
-    :param temp: The temperature for the softmax operation (default: 1).
-    :param p: The power for the RePU triangle (optional).
-    :param skip_eta: The base learning rate used in the SoftHebb convolution for preprocessing the skip input.
-    :param skip_temp: The temperature for the softmax operation used in the SoftHebb convolution for preprocessing the
-        skip input. (default: 1).
-    :param skip_p: The power for the RePU triangle used in the SoftHebb convolution for preprocessing the skip input. (
-        optional).
     """
 
-    def __init__(self, cell: Cell, in_channels: int, skip_channels: int, out_channels: int, eta: float, stride=1,
-                 follows_reduction=False, temp=1.0, p: float | None = None, skip_eta=0.01, skip_temp=1.0,
-                 skip_p: float | None = None):
+    def __init__(self, cell: Cell, in_channels: int, skip_channels: int, out_channels: int, params: dict, stride=1,
+                 follows_reduction=False):
         super(HebbianCell, self).__init__()
 
         self.nodes = list(topological_sort(cell))  # Topological sorting to ensure an appropriate order of operations.
@@ -159,16 +151,14 @@ class HebbianCell(Module):
         self.used = [False] * n_nodes  # List that records whether a nodes' output is used.
         self.n_ops = n_nodes - 2
 
-        # Preprocess inputs if necessary.
-        self.preprocess_skip = None
-        self.preprocess_x = None
+        # Preprocess skip input.
+        eta, tau, p = params["skip_conv"]["eta"], 1 / params["skip_conv"]["tau_inv"], params["skip_conv"]["p"]
         if follows_reduction:
             # Reduce spatial shape of the skip input using a strided 3x3 convolution.
-            self.preprocess_skip = BNConvTriangle(skip_channels, out_channels, 3, skip_eta, stride=2, temp=skip_temp,
-                                                  p=skip_p)
-        elif skip_channels != out_channels:
+            self.preprocess_skip = BNConvTriangle(skip_channels, out_channels, 3, eta, stride=2, temp=tau, p=p)
+        else:
             # Apply a 3x3 convolution to make the number of channels match.
-            self.preprocess_skip = BNConvTriangle(skip_channels, out_channels, 3, skip_eta, temp=skip_temp, p=skip_p)
+            self.preprocess_skip = BNConvTriangle(skip_channels, out_channels, 3, eta, temp=tau, p=p)
 
         # Keep track of the output channels for each node to apply zero padding where necessary.
         node_channels = [0] * n_nodes
@@ -189,44 +179,46 @@ class HebbianCell(Module):
                 op_left = left_attr['op']
                 op_right = right_attr['op']
 
-                # Translate operations to modules. Only apply stride to original inputs.
-                if left == 0 or left == 1:
-                    module_left = self.translate(op_left, node_channels[left], out_channels, eta, stride, temp=temp,
-                                                 p=p)
-                else:
-                    module_left = self.translate(op_left, node_channels[left], out_channels, eta, stride=1, temp=temp,
-                                                 p=p)
-                if right == 0 or right == 1:
-                    module_right = self.translate(op_right, node_channels[right], out_channels, eta, stride, temp=temp,
-                                                  p=p)
-                else:
-                    module_right = self.translate(op_right, node_channels[right], out_channels, eta, stride=1,
-                                                  temp=temp, p=p)
+                # Translate the operations to a modules.
+                ops = {"left": op_left, "right": op_right}
+                nodes = {"left": left, "right": right}
+                channels = {}
+                modules = {}
+                for side in ["left", "right"]:
+                    op = ops[side]
+                    node = nodes[side]
 
-                # Record output channels for each op (only changes for convolutions).
-                if "conv" in op_left:
-                    left_channels = out_channels
-                else:
-                    left_channels = node_channels[left]
-                if "conv" in op_right:
-                    right_channels = out_channels
-                else:
-                    right_channels = node_channels[right]
+                    # Change node output channels and collect hyperparameters for convolutions.
+                    if "conv" in op:
+                        # Convolution so collect hyperparameters and the number of output channels changes.
+                        eta, tau, p = params[op]["eta"], 1 / params[op]["tau_inv"], params[op]["p"]
+                        channels[side] = out_channels
+                    else:
+                        # No convolution so no change to the number of output channels.
+                        channels[side] = node_channels[node]
+
+                    # Translate the operation to a module. Only apply stride to original inputs.
+                    if node == 0 or node == 1:
+                        modules[side] = self.translate(op, node_channels[node], out_channels, eta, stride, temp=tau,
+                                                       p=p)
+                    else:
+                        modules[side] = self.translate(op, node_channels[node], out_channels, eta, stride=1, temp=tau,
+                                                       p=p)
 
                 # Apply padding if necessary.
-                if left_channels < right_channels:
-                    padding = Padding(right_channels - left_channels)
-                    module_left = Sequential(module_left, padding)
-                if right_channels < left_channels:
-                    padding = Padding(left_channels - right_channels)
-                    module_right = Sequential(module_right, padding)
+                if channels["left"] < channels["right"]:
+                    padding = Padding(channels["right"] - channels["left"])
+                    modules["left"] = Sequential(modules["left"], padding)
+                if channels["right"] < channels["left"]:
+                    padding = Padding(channels["left"] - channels["right"])
+                    modules["right"] = Sequential(modules["right"], padding)
 
                 # Record the number of output channels for this node.
-                node_channels[node] = max(left_channels, right_channels)
+                node_channels[node] = max(channels["left"], channels["right"])
 
                 # Register operations.
-                self.layers.append(module_left)
-                self.layers.append(module_right)
+                self.layers.append(modules["left"])
+                self.layers.append(modules["right"])
 
                 # Mark inputs as used.
                 self.used[left] = True
