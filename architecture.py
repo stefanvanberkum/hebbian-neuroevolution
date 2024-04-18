@@ -103,7 +103,9 @@ class Architecture:
     def mutate(self, identifier: int):
         """Generate a randomly mutated copy of this architecture.
 
-        With equal probability, this randomly mutates either the reduction cell or the hyperparameters.
+        With equal probability, this randomly mutates either the architecture or its hyperparameters. If the
+        architecture is mutated, one of the two reduction cells is randomly chosen for mutation. If the
+        hyperparameters are mutated, the set of hyperparameters is randomly redrawn for a single convolution.
 
         :param identifier: The child's identifier.
         :return: The child architecture.
@@ -115,17 +117,54 @@ class Architecture:
         child.identifier = identifier
         child.parent = self.identifier
 
-        if self.normal:
-            # Randomly choose which cell to mutate.
+        def random_params():
+            """Generate a set of random hyperparameters for a convolution.
+
+            :return: A random set of hyperparameters.
+            """
+
+            params = {"eta": max(0.0, rng.normal(0.05, 0.015)),  # Roughly 0-0.1.
+                      "tau_inv": max(0.0, rng.normal(0.5, 0.15)),  # Roughly 0-1.
+                      "p": max(0.0, rng.normal(1, 0.2))}  # Roughly 0.25-1.75.
+            return params
+
+        # Randomly choose whether to mutate the architecture or its hyperparameters.
+        if rng.random() < 0.5:
+            # Mutate the architecture: Pick one of the cells at random.
             if rng.random() < 0.5:
-                # Mutate normal cell.
-                child.normal_cell.mutate()
+                old_edge, new_edge, new_op = child.cell_1.mutate()
+
+                if old_edge in child.params["cell_1"]:
+                    # Remove old hyperparameters.
+                    del child.params["cell_1"][old_edge]
+
+                if "conv" in new_op:
+                    # Add new hyperparameters.
+                    child.params["cell_1"][new_op] = random_params()
             else:
-                # Mutate reduction cell.
-                child.reduction_cell.mutate()
+                old_edge, new_edge, new_op = child.cell_2.mutate()
+
+                if old_edge in child.params["cell_2"]:
+                    # Remove old hyperparameters.
+                    del child.params["cell_2"][old_edge]
+
+                if "conv" in new_op:
+                    # Add new hyperparameters.
+                    child.params["cell_2"][new_op] = random_params()
         else:
-            # Mutate reduction cell.
-            child.reduction_cell.mutate()
+            # Mutate the hyperparameters: Pick one of the convolutions at random.
+            cell_1_convs = list(child.params["cell_1"].keys())
+            cell_2_convs = list(child.params["cell_2"].keys())
+            conv = rng.choice(1 + len(cell_1_convs) + len(cell_2_convs))
+            if conv == 0:
+                # Redraw the hyperaparameters for the initial convolution.
+                child.params["initial_conv"] = random_params()
+            elif conv < 1 + len(cell_1_convs):
+                # Redraw the hyperaparameters for the chosen convolution from the first reduction cell.
+                child.params["cell_1"][cell_1_convs[conv - 1]] = random_params()
+            else:
+                # Redraw the hyperaparameters for the chosen convolution from the second reduction cell.
+                child.params["cell_2"][cell_2_convs[conv - 1 - len(cell_1_convs)]] = random_params()
         return child
 
     def save(self, path: str):
@@ -179,6 +218,8 @@ class Cell(MultiDiGraph):
 
         With equal probability, this randomly mutates either a hidden state (i.e., change input to a pairwise
         operation without forming a loop) or an operation (i.e., change operation to one in the operation set).
+
+        :return: A tuple comprising (old_edge, new_edge, new_op).
         """
 
         rng = default_rng()
@@ -187,10 +228,10 @@ class Cell(MultiDiGraph):
             # Mutate hidden state: Randomly sample a node (pairwise operation).
             node = rng.integers(2, self.n_ops + 2)
 
-            # Randomly sample an input edge (old_input, node, attr) and remove it.
-            old_input, _, attr = list(self.in_edges(node, data=True))[rng.integers(2)]
+            # Randomly sample an input edge (old_input, node, key, attr) and remove it.
+            old_input, _, key, attr = list(self.in_edges(node, keys=True, data=True))[rng.integers(2)]
             op = attr['op']
-            self.remove_edge(old_input, node)
+            self.remove_edge(old_input, node, key)
 
             # Get generations: A node can sample inputs from its own and previous generations without forming loops.
             candidates = []
@@ -208,16 +249,25 @@ class Cell(MultiDiGraph):
 
             # Pick a random node from the candidates and add new edge.
             new_input = rng.choice(candidates)
-            self.add_edge(new_input, node, op=op)
+            self.add_edge(new_input, node, key=key, op=op)
+
+            old_edge = (old_input, node, key)
+            new_edge = (new_input, node, key)
+            new_op = op
         else:
             # Mutate operation: Randomly sample an edge (operation).
-            edge = rng.choice(list(self.edges))
+            edge = rng.choice(list(self.edges(keys=True)))
 
             # Pick a random operation from the operation set.
             old_op = self.edges[edge]['op']
             candidates = list(OpSet)
             candidates.remove(old_op)
             self.edges[edge]['op'] = rng.choice(candidates)
+
+            old_edge = edge
+            new_edge = edge
+            new_op = self.edges[edge]['op']
+        return old_edge, new_edge, new_op
 
     def visualize(self, path: str):
         """Visualize the cell.

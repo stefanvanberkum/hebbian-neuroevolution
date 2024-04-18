@@ -68,7 +68,7 @@ class HebbianEncoder(Module):
     :param scaling_factor: The scaling factor for the number of filters (default: 4).
     """
 
-    def __init__(self, in_channels: int, architecture: Architecture, n_channels: int, eta: float, scaling_factor=4):
+    def __init__(self, in_channels: int, architecture: Architecture, n_channels: int, scaling_factor=4):
         super(HebbianEncoder, self).__init__()
 
         params = architecture.params
@@ -174,24 +174,28 @@ class HebbianCell(Module):
         for node in self.nodes:
             if node != 0 and node != 1:
                 # Get inputs and corresponding operations.
-                (left, _, left_attr), (right, _, right_attr) = list(cell.in_edges(node, data=True))
+                left_edge, right_edge = list(cell.in_edges(node, keys=True, data=True))
+                left, _, key, left_attr = left_edge
+                right, _, key, right_attr = right_edge
                 self.inputs += [(left, right)]
-                op_left = left_attr['op']
-                op_right = right_attr['op']
+                left_op = left_attr['op']
+                right_op = right_attr['op']
 
                 # Translate the operations to a modules.
-                ops = {"left": op_left, "right": op_right}
+                edges = {"left": left_edge, "right": right_edge}
+                ops = {"left": left_op, "right": right_op}
                 nodes = {"left": left, "right": right}
                 channels = {}
                 modules = {}
                 for side in ["left", "right"]:
+                    edge = edges[side]
                     op = ops[side]
                     node = nodes[side]
 
                     # Change node output channels and collect hyperparameters for convolutions.
                     if "conv" in op:
                         # Convolution so collect hyperparameters and the number of output channels changes.
-                        eta, tau, p = params[op]["eta"], 1 / params[op]["tau_inv"], params[op]["p"]
+                        eta, tau, p = params[edge]["eta"], 1 / params[edge]["tau_inv"], params[edge]["p"]
                         channels[side] = out_channels
                     else:
                         # No convolution so no change to the number of output channels.
