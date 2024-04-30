@@ -11,7 +11,7 @@ import pickle
 from copy import deepcopy
 from enum import StrEnum, auto, unique
 from os import makedirs
-from os.path import exists, join, splitext
+from os.path import exists, join
 from shutil import rmtree
 
 from networkx import MultiDiGraph, get_edge_attributes, set_edge_attributes, topological_generations
@@ -132,25 +132,41 @@ class Architecture:
         if rng.random() < 0.5:
             # Mutate the architecture: Pick one of the cells at random.
             if rng.random() < 0.5:
-                old_edge, new_edge, new_op = child.cell_1.mutate()
+                # Mutate the first reduction cell.
+                old_edge, new_edge, old_op, new_op = child.cell_1.mutate()
 
-                if old_edge in child.params["cell_1"]:
-                    # Remove old hyperparameters.
-                    del child.params["cell_1"][old_edge]
+                if old_op == new_op:
+                    # Mutation only changed the edge so hyperparameters may need to be reassigned.
+                    if "conv" in new_op:
+                        child.params["cell_1"][new_edge] = child.params["cell_1"][old_edge]
+                        del child.params["cell_1"][old_edge]
+                else:
+                    # Mutation changed the operation so new hyperparameters may need to be drawn.
+                    if "conv" in old_op:
+                        # Remove old hyperparameters.
+                        del child.params["cell_1"][old_edge]
 
-                if "conv" in new_op:
-                    # Add new hyperparameters.
-                    child.params["cell_1"][new_op] = random_params()
+                    if "conv" in new_op:
+                        # Draw new hyperparameters.
+                        child.params["cell_1"][new_edge] = random_params()
             else:
-                old_edge, new_edge, new_op = child.cell_2.mutate()
+                # Mutate the second reduction cell.
+                old_edge, new_edge, old_op, new_op = child.cell_2.mutate()
 
-                if old_edge in child.params["cell_2"]:
-                    # Remove old hyperparameters.
-                    del child.params["cell_2"][old_edge]
+                if old_op == new_op:
+                    # Mutation only changed the edge so hyperparameters may need to be reassigned.
+                    if "conv" in new_op:
+                        child.params["cell_2"][new_edge] = child.params["cell_2"][old_edge]
+                        del child.params["cell_2"][old_edge]
+                else:
+                    # Mutation changed the operation so new hyperparameters may need to be drawn.
+                    if "conv" in old_op:
+                        # Remove old hyperparameters.
+                        del child.params["cell_2"][old_edge]
 
-                if "conv" in new_op:
-                    # Add new hyperparameters.
-                    child.params["cell_2"][new_op] = random_params()
+                    if "conv" in new_op:
+                        # Draw new hyperparameters.
+                        child.params["cell_2"][new_edge] = random_params()
         else:
             # Mutate the hyperparameters: Pick one of the convolutions at random.
             cell_1_convs = list(child.params["cell_1"].keys())
@@ -219,7 +235,7 @@ class Cell(MultiDiGraph):
         With equal probability, this randomly mutates either a hidden state (i.e., change input to a pairwise
         operation without forming a loop) or an operation (i.e., change operation to one in the operation set).
 
-        :return: A tuple comprising (old_edge, new_edge, new_op).
+        :return: A tuple comprising (old_edge, new_edge, old_op, new_op).
         """
 
         rng = default_rng()
@@ -249,10 +265,11 @@ class Cell(MultiDiGraph):
 
             # Pick a random node from the candidates and add new edge.
             new_input = rng.choice(candidates)
-            self.add_edge(new_input, node, key=key, op=op)
+            new_key = self.add_edge(new_input, node, op=op)
 
             old_edge = (old_input, node, key)
-            new_edge = (new_input, node, key)
+            new_edge = (new_input, node, new_key)
+            old_op = op
             new_op = op
         else:
             # Mutate operation: Randomly sample an edge (operation).
@@ -262,17 +279,17 @@ class Cell(MultiDiGraph):
             old_op = self.edges[edge]['op']
             candidates = list(OpSet)
             candidates.remove(old_op)
-            self.edges[edge]['op'] = rng.choice(candidates)
+            new_op = rng.choice(candidates)
+            self.edges[edge]['op'] = new_op
 
-            old_edge = edge
-            new_edge = edge
-            new_op = self.edges[edge]['op']
-        return old_edge, new_edge, new_op
+            old_edge = tuple(edge)
+            new_edge = tuple(edge)
+        return old_edge, new_edge, old_op, new_op
 
     def visualize(self, path: str):
         """Visualize the cell.
 
-        :param path: Path to save the visualization to (including filename).
+        :param path: Path to save the visualization to (including a filename).
         """
 
         # Add ops as edge label.
@@ -281,7 +298,7 @@ class Cell(MultiDiGraph):
 
         graph = to_agraph(self)
         graph.layout(prog='dot')
-        graph.draw(path)
+        graph.draw(path + ".png")
 
         # Add edge index as edge label.
         indices = {key: key for key in ops}
@@ -289,5 +306,12 @@ class Cell(MultiDiGraph):
 
         graph = to_agraph(self)
         graph.layout(prog='dot')
-        filepath, extension = splitext(path)
-        graph.draw(filepath + "_map" + extension)
+        graph.draw(path + "_map.png")
+
+        # Save a list of edges.
+        with open(path + "_edges.csv", "w") as out:
+            out.write("u,v,key,op\n")
+            for edge in ops:
+                u, v, key = edge
+                op = ops[edge]
+                out.write(f"{u},{v},{key},{op}\n")

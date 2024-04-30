@@ -25,7 +25,7 @@ from models import Classifier, HebbianEncoder
 from training import test, train
 
 
-def evolve(n_channels=8, scaling_factor=4, n_ops=5, n_epochs=10, generations=200, eta=0.01, encoder_batch=10,
+def evolve(n_channels=8, scaling_factor=4, n_ops=5, n_epochs=10, generations=200, encoder_batch=32,
            classifier_batch=256, verbose=False, checkpoint=None):
     """Evolve a Hebbian encoder.
 
@@ -36,8 +36,7 @@ def evolve(n_channels=8, scaling_factor=4, n_ops=5, n_epochs=10, generations=200
     :param n_ops: The number of operations in each cell (default: 5).
     :param n_epochs: The epoch increment for training the classifier (default: 10).
     :param generations: The number of generations (default: 200).
-    :param eta: The base learning rate used in SoftHebb convolutions (default: 0.01).
-    :param encoder_batch: The batch size for training the encoder's SoftHebb convolutions (default: 10).
+    :param encoder_batch: The batch size for training the encoder's SoftHebb convolutions (default: 32).
     :param classifier_batch: The batch size for training the classifier with SGD (default: 256).
     :param verbose: True if info should be printed (default: False).
     :param checkpoint: Optional checkpoint name to continue evolution.
@@ -174,7 +173,7 @@ def evolve(n_channels=8, scaling_factor=4, n_ops=5, n_epochs=10, generations=200
     if checkpoint is None:
         # Generate, train, and evaluate the initial population of random models.
         log("Generating initial population...", sys.stdout, log_file)
-        progress_bar = tqdm(range(60), desc="Architecture", file=sys.stdout)
+        progress_bar = tqdm(range(8), desc="Architecture", file=sys.stdout)
         for i in progress_bar:
             print(progress_bar, file=log_file)
 
@@ -311,9 +310,8 @@ def evolve(n_channels=8, scaling_factor=4, n_ops=5, n_epochs=10, generations=200
 
             # Save cell visualizations.
             makedirs(join(path, "winners", str(winner)), exist_ok=True)
-            if architecture.normal:
-                architecture.normal_cell.visualize(join(path, "winners", str(winner), "normal.png"))
-            architecture.reduction_cell.visualize(join(path, "winners", str(winner), "reduction.png"))
+            architecture.cell_1.visualize(join(path, "winners", str(winner), "cell_1"))
+            architecture.cell_2.visualize(join(path, "winners", str(winner), "cell_2"))
 
             # Record accuracy.
             out.write(f"{winner},{accuracies[winner]}\n")
@@ -330,25 +328,20 @@ def evolve(n_channels=8, scaling_factor=4, n_ops=5, n_epochs=10, generations=200
 if __name__ == '__main__':
     # For command-line use.
     parser = ArgumentParser()
-    parser.add_argument('--dataset', type=str, default='CIFAR10', choices=['MNIST', 'CIFAR10'],
-                        help="The dataset to use for evolution (default: CIFAR10)")
-    parser.add_argument('--n_channels', type=int, default=8, help="The initial number of channels (default: 8).")
+    parser.add_argument('--n_channels', type=int, default=24, help="The initial number of channels (default: 24).")
     parser.add_argument('--scaling_factor', type=int, default=4,
                         help="The scaling factor for the number of filters after each reduction cell (default: 4).")
     parser.add_argument('--n_ops', type=int, default=5, help="The number of operations in each cell (default: 5).")
-    parser.add_argument('--n_reduction', type=int, default=2, help="The number of reduction cells (default: 3).")
-    parser.add_argument('--n_epochs', type=int, default=10, help="The epoch increment for training the classifier ("
-                                                                 "default: 10).")
-    parser.add_argument('--generations', type=int, default=100, help="The number of generations (default 100).")
-    parser.add_argument('--eta', type=float, default=0.01, help="The base learning rate used in SoftHebb convolutions ("
-                                                                "default: 0.01).")
-    parser.add_argument('--encoder_batch', type=int, default=32,
-                        help="The batch size for training the encoder's SoftHebb convolutions (default: 32).")
-    parser.add_argument('--classifier_batch', type=int, default=256,
-                        help="The batch size for training the classifier with SGD (default: 256).")
+    parser.add_argument('--n_epochs', type=int, default=20, help="The epoch increment for training the classifier ("
+                                                                 "default: 20).")
+    parser.add_argument('--generations', type=int, default=200, help="The number of generations (default: 200).")
+    parser.add_argument('--encoder_batch', type=int, default=10,
+                        help="The batch size for training the encoder's SoftHebb convolutions (default: 10).")
+    parser.add_argument('--classifier_batch', type=int, default=64,
+                        help="The batch size for training the classifier with SGD (default: 64).")
     parser.add_argument('--verbose', action=BooleanOptionalAction, help="Turn on this option for verbose info.")
     parser.add_argument('--checkpoint', type=str, default=None, help="Optional checkpoint name to continue evolution.")
     args = parser.parse_args()
 
-    evolve(args.dataset, args.n_channels, args.scaling_factor, args.n_ops, args.n_reduction, args.n_epochs,
-           args.generations, args.eta, args.encoder_batch, args.classifier_batch, args.verbose, args.checkpoint)
+    evolve(args.n_channels, args.scaling_factor, args.n_ops, args.n_epochs, args.generations, args.encoder_batch,
+           args.classifier_batch, args.verbose, args.checkpoint)

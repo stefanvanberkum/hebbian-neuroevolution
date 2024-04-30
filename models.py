@@ -175,14 +175,14 @@ class HebbianCell(Module):
             if node != 0 and node != 1:
                 # Get inputs and corresponding operations.
                 left_edge, right_edge = list(cell.in_edges(node, keys=True, data=True))
-                left, _, key, left_attr = left_edge
-                right, _, key, right_attr = right_edge
+                left, _, left_key, left_attr = left_edge
+                right, _, right_key, right_attr = right_edge
                 self.inputs += [(left, right)]
                 left_op = left_attr['op']
                 right_op = right_attr['op']
 
                 # Translate the operations to a modules.
-                edges = {"left": left_edge, "right": right_edge}
+                edges = {"left": (left, node, left_key), "right": (right, node, right_key)}
                 ops = {"left": left_op, "right": right_op}
                 nodes = {"left": left, "right": right}
                 channels = {}
@@ -190,7 +190,7 @@ class HebbianCell(Module):
                 for side in ["left", "right"]:
                     edge = edges[side]
                     op = ops[side]
-                    node = nodes[side]
+                    vertex = nodes[side]
 
                     # Change node output channels and collect hyperparameters for convolutions.
                     if "conv" in op:
@@ -199,14 +199,14 @@ class HebbianCell(Module):
                         channels[side] = out_channels
                     else:
                         # No convolution so no change to the number of output channels.
-                        channels[side] = node_channels[node]
+                        channels[side] = node_channels[vertex]
 
                     # Translate the operation to a module. Only apply stride to original inputs.
-                    if node == 0 or node == 1:
-                        modules[side] = self.translate(op, node_channels[node], out_channels, eta, stride, temp=tau,
+                    if vertex == 0 or vertex == 1:
+                        modules[side] = self.translate(op, node_channels[vertex], out_channels, eta, stride, temp=tau,
                                                        p=p)
                     else:
-                        modules[side] = self.translate(op, node_channels[node], out_channels, eta, stride=1, temp=tau,
+                        modules[side] = self.translate(op, node_channels[vertex], out_channels, eta, stride=1, temp=tau,
                                                        p=p)
 
                 # Apply padding if necessary.
