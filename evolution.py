@@ -25,19 +25,19 @@ from models import Classifier, HebbianEncoder
 from training import test, train
 
 
-def evolve(n_channels=8, scaling_factor=4, n_ops=5, n_epochs=10, generations=200, encoder_batch=32,
-           classifier_batch=256, verbose=False, checkpoint=None):
+def evolve(n_channels=24, scaling_factor=4, n_ops=5, n_epochs=20, generations=200, encoder_batch=10,
+           classifier_batch=64, verbose=False, checkpoint=None):
     """Evolve a Hebbian encoder.
 
     The encoder comprises an initial convolution and two reduction cells.
 
-    :param n_channels: The initial number of channels (default: 8).
+    :param n_channels: The initial number of channels (default: 24).
     :param scaling_factor: The scaling factor for the number of filters after each reduction cell (default: 4).
     :param n_ops: The number of operations in each cell (default: 5).
-    :param n_epochs: The epoch increment for training the classifier (default: 10).
+    :param n_epochs: The epoch increment for training the classifier (default: 20).
     :param generations: The number of generations (default: 200).
-    :param encoder_batch: The batch size for training the encoder's SoftHebb convolutions (default: 32).
-    :param classifier_batch: The batch size for training the classifier with SGD (default: 256).
+    :param encoder_batch: The batch size for training the encoder's SoftHebb convolutions (default: 10).
+    :param classifier_batch: The batch size for training the classifier with SGD (default: 64).
     :param verbose: True if info should be printed (default: False).
     :param checkpoint: Optional checkpoint name to continue evolution.
     """
