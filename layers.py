@@ -358,13 +358,13 @@ class BNConvReLU(Module):
 
         self.bn = BatchNorm2d(num_features=in_channels, affine=False)
         if stride == 1:
-            self.conv = Conv2d(in_channels, out_channels, kernel_size, padding='same', dilation=dilation,
+            self.conv = Conv2d(in_channels, out_channels, kernel_size, padding='same', dilation=dilation, bias=False,
                                padding_mode='reflect')
         elif dilation == 2:
-            self.conv = Conv2d(in_channels, out_channels, kernel_size, stride=2, dilation=2, padding=1,
+            self.conv = Conv2d(in_channels, out_channels, kernel_size, stride=2, dilation=2, padding=1, bias=False,
                                padding_mode='reflect')
         else:
-            self.conv = Conv2d(in_channels, out_channels, kernel_size, stride=2)
+            self.conv = Conv2d(in_channels, out_channels, kernel_size, stride=2, bias=False)
         self.relu = ReLU()
 
     def forward(self, x: Tensor):

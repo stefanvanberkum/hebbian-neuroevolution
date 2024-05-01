@@ -7,6 +7,7 @@ Functions
 - :func:`evolve`: Run evolution.
 """
 import pickle
+import shutil
 import sys
 from argparse import ArgumentParser, BooleanOptionalAction
 from datetime import datetime
@@ -98,8 +99,9 @@ def evolve(n_channels=24, scaling_factor=4, n_ops=5, n_epochs=20, generations=20
         log_file = open(log_path, 'a')
         log(f"Loading evolutionary run {checkpoint}", sys.stdout, log_file)
 
-        rng, P_1, P_2, P_3, P_3_history, accuracies, max_accuracies, start, step, oldest = pickle.load(
+        rng, P_1, P_2, P_3, P_3_history, accuracies, max_accuracies, last_generation, step, oldest = pickle.load(
             open(ckpt_path, 'rb'))
+        start = last_generation + 1
 
     def train_and_evaluate(arch: Architecture, identifier: int):
         """Train, evaluate, and save a model.
@@ -128,8 +130,8 @@ def evolve(n_channels=24, scaling_factor=4, n_ops=5, n_epochs=20, generations=20
                     f"{training_state['max_epochs']}.", sys.stderr, log_file)
         else:
             # Initialize training state.
-            training_state = {'start_epoch': 0, 'max_epochs': 3 * n_epochs, 'optimizer_state_dict': {},
-                              'scheduler_state_dict': {}, 'save_path': state_path}
+            training_state = {'start_epoch': 0, 'max_epochs': 3 * n_epochs, 'optimizer': {}, 'scheduler': {},
+                              'scaler': {}, 'save_path': state_path}
             update_accuracy = False
 
             if verbose:
@@ -173,7 +175,7 @@ def evolve(n_channels=24, scaling_factor=4, n_ops=5, n_epochs=20, generations=20
     if checkpoint is None:
         # Generate, train, and evaluate the initial population of random models.
         log("Generating initial population...", sys.stdout, log_file)
-        progress_bar = tqdm(range(8), desc="Architecture", file=sys.stdout)
+        progress_bar = tqdm(range(60), desc="Architecture", file=sys.stdout)
         for i in progress_bar:
             print(progress_bar, file=log_file)
 
@@ -192,7 +194,7 @@ def evolve(n_channels=24, scaling_factor=4, n_ops=5, n_epochs=20, generations=20
 
     # Run evolution for the specified number of generations.
     log("Running evolution...", sys.stdout, log_file)
-    progress_bar = tqdm(range(start, generations), desc="Generation", file=sys.stdout)
+    progress_bar = tqdm(range(start, generations), desc="Generation", file=sys.stdout, initial=start, total=generations)
     progress_bar.set_description(f"Best accuracy: {max(accuracies):.2f}%")
     for generation in progress_bar:
         print(progress_bar, file=log_file)
@@ -236,6 +238,11 @@ def evolve(n_channels=24, scaling_factor=4, n_ops=5, n_epochs=20, generations=20
             P_3.add(winner)
             P_3_history.add(winner)
 
+            # No need for these after reaching P_3 (training has concluded).
+            remove(join(arch_path, str(winner), "encoder.pt"))
+            remove(join(arch_path, str(winner), "classifier.pt"))
+            remove(join(arch_path, str(winner), "training_state.pt"))
+
             if verbose:
                 log(f"[INFO] Architecture {winner} was promoted to P_3, accuracy went from {old_acc:.2f}% to "
                     f"{accuracies[winner]:.2f}%.", sys.stderr, log_file)
@@ -247,9 +254,10 @@ def evolve(n_channels=24, scaling_factor=4, n_ops=5, n_epochs=20, generations=20
                 for subpopulation in [P_1, P_2, P_3]:
                     if architecture in subpopulation:
                         subpopulation.remove(architecture)
-                        remove(join(arch_path, str(architecture), "encoder.pt"))
-                        remove(join(arch_path, str(architecture), "classifier.pt"))
-                        remove(join(arch_path, str(architecture), "training_state.pt"))
+                        if exists(join(arch_path, str(architecture), "encoder.pt")):
+                            remove(join(arch_path, str(architecture), "encoder.pt"))
+                            remove(join(arch_path, str(architecture), "classifier.pt"))
+                            remove(join(arch_path, str(architecture), "training_state.pt"))
             oldest += 60
 
             if verbose:
@@ -260,9 +268,10 @@ def evolve(n_channels=24, scaling_factor=4, n_ops=5, n_epochs=20, generations=20
                 for subpopulation in [P_1, P_2, P_3]:
                     if architecture in subpopulation:
                         subpopulation.remove(architecture)
-                        remove(join(arch_path, str(architecture), "encoder.pt"))
-                        remove(join(arch_path, str(architecture), "classifier.pt"))
-                        remove(join(arch_path, str(architecture), "training_state.pt"))
+                        if exists(join(arch_path, str(architecture), "encoder.pt")):
+                            remove(join(arch_path, str(architecture), "encoder.pt"))
+                            remove(join(arch_path, str(architecture), "classifier.pt"))
+                            remove(join(arch_path, str(architecture), "training_state.pt"))
 
             if verbose:
                 log(f"[INFO] Deceased architectures: {oldest}--{oldest + 14}", sys.stderr, log_file)
@@ -284,13 +293,6 @@ def evolve(n_channels=24, scaling_factor=4, n_ops=5, n_epochs=20, generations=20
 
     log("Done!\n", sys.stdout, log_file)
 
-    # Remove all model checkpoints.
-    for subpopulation in [P_1, P_2, P_3]:
-        for architecture in subpopulation:
-            remove(join(arch_path, str(architecture), "encoder.pt"))
-            remove(join(arch_path, str(architecture), "classifier.pt"))
-            remove(join(arch_path, str(architecture), "training_state.pt"))
-
     # Save statistics.
     np.save(join(path, "accuracies.npy"), np.array(accuracies))
     np.savetxt(join(path, "accuracies.csv"), np.array(accuracies), delimiter=',')
@@ -298,6 +300,8 @@ def evolve(n_channels=24, scaling_factor=4, n_ops=5, n_epochs=20, generations=20
     np.savetxt(join(path, "max_accuracies.csv"), np.array(max_accuracies), delimiter=',')
 
     # Record winners.
+    if exists(join(path, "winners")):
+        shutil.rmtree(join(path, "winners"))
     winners = sorted(P_3_history, key=lambda x: accuracies[x])[-5:]
     pickle.dump(winners, open(join(path, "winners.pkl"), 'wb'))
     best_arch = None
@@ -309,7 +313,7 @@ def evolve(n_channels=24, scaling_factor=4, n_ops=5, n_epochs=20, generations=20
             architecture = pickle.load(open(join(arch_path, str(winner), "architecture.pkl"), 'rb'))
 
             # Save cell visualizations.
-            makedirs(join(path, "winners", str(winner)), exist_ok=True)
+            makedirs(join(path, "winners", str(winner)))
             architecture.cell_1.visualize(join(path, "winners", str(winner), "cell_1"))
             architecture.cell_2.visualize(join(path, "winners", str(winner), "cell_2"))
 

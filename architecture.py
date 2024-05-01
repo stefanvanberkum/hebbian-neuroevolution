@@ -55,11 +55,6 @@ class Architecture:
 
         self.identifier = identifier
 
-        # TODO: Separately evolve the two cells. Run for twice as long (0.5 * 0.5 chance of mutating a cell, i.e.,
-        #  half of what it was in the original). 50-50 between hyperparameters/architecture. 33-33-33 between layers if
-        #  hyperparameters, 50-50 between cells if architecture. Still do 8 channels and scale up afterward. Keep
-        #  learning rate and dropout to default (perhaps tune afterward).
-
         # Randomly initialize the cells.
         self.cell_1 = Cell(n_ops=n_ops)
         self.cell_2 = Cell(n_ops=n_ops)

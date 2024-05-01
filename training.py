@@ -43,8 +43,7 @@ def train(encoder: Module, classifier: Module, data: Dataset, n_epochs: int, enc
     :param verbose: True if progress should be printed (default: False).
     :param validation_data: Validation data used for testing, only used if ``verbose`` is ``True`` (default: None).
     :param val_batch: Batch size for testing on the validation data (default: 64).
-    :param checkpoint: Optional dict with {start_epoch, max_epochs, optimizer_state_dict, scheduler_state_dict,
-        save_path}.
+    :param checkpoint: Optional dict with {start_epoch, max_epochs, optimizer, scheduler, scaler, save_path}.
     :return: A trained network comprising the encoder and classifier.
     """
 
@@ -112,8 +111,7 @@ def train_classifier(encoder: Module, classifier: Module, data: Dataset, n_epoch
     :param verbose: True if progress should be printed (default: False).
     :param validation_data: Validation data used for testing, only used if ``verbose`` is ``True`` (default: None).
     :param val_batch: Batch size for testing on the validation data (default: 64).
-    :param checkpoint: Optional dict with {start_epoch, max_epochs, optimizer_state_dict, scheduler_state_dict,
-        save_path}.
+    :param checkpoint: Optional dict with {start_epoch, max_epochs, optimizer, scheduler, scaler save_path}.
     """
 
     # Set up dataloader.
@@ -134,12 +132,13 @@ def train_classifier(encoder: Module, classifier: Module, data: Dataset, n_epoch
 
         optimizer = Adam(classifier.parameters())
         if checkpoint['start_epoch'] > 0:
-            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            optimizer.load_state_dict(checkpoint['optimizer'])
 
         scheduler = CosineAnnealingLR(optimizer, T_max=checkpoint['max_epochs'],
                                       last_epoch=checkpoint['start_epoch'] - 1)
         if checkpoint['start_epoch'] > 0:
-            scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+            scheduler.load_state_dict(checkpoint['scheduler'])
+            scaler.load_state_dict(checkpoint['scaler'])
 
     # Training loop.
     cumulative_loss = 0
@@ -196,8 +195,8 @@ def train_classifier(encoder: Module, classifier: Module, data: Dataset, n_epoch
     if checkpoint is not None:
         start_epoch = checkpoint['start_epoch'] + n_epochs
         checkpoint = {'start_epoch': start_epoch, 'max_epochs': checkpoint['max_epochs'],
-                      'optimizer_state_dict': optimizer.state_dict(), 'scheduler_state_dict': scheduler.state_dict(),
-                      'save_path': checkpoint['save_path']}
+                      'optimizer': optimizer.state_dict(), 'scheduler': scheduler.state_dict(),
+                      'scaler': scaler.state_dict(), 'save_path': checkpoint['save_path']}
         torch.save(checkpoint, checkpoint['save_path'])
 
 
