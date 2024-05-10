@@ -393,7 +393,7 @@ def bayesian_analysis():
         hebbnet_accuracies = np.array(hebbnet_accuracies)
         softhebb_accuracies = np.array(softhebb_accuracies)
 
-        # Perform Bayesian analysis and record confidence intervals.
+        # Perform Bayesian analysis and record credibility intervals.
         posterior = CorrelatedTTest(softhebb_accuracies, hebbnet_accuracies)
         t_parameters = posterior.df, posterior.mean, np.sqrt(posterior.var)
         levels = [0.9, 0.95, 0.99, 0.999]
@@ -402,6 +402,14 @@ def bayesian_analysis():
             out.write("Level,Low,High\n")
             for i in range(4):
                 out.write(f"{levels[i]},{low[i]},{high[i]}\n")
+
+        # Compute posterior probabilities of practical negativity, equivalence, and positivity.
+        negative = scipy.stats.t.cdf(-1, *t_parameters)
+        positive = 1 - scipy.stats.t.cdf(1, *t_parameters)
+        equivalent = 1 - negative - positive
+        with open(f"results/practical_regions_{dataset}.csv", 'w') as out:
+            out.write("Negative,Equivalent,Positive\n")
+            out.write(f"{negative},{equivalent},{positive}\n")
 
         if dataset == 'CIFAR100':
             params_cifar100 = t_parameters
