@@ -17,15 +17,12 @@ from argparse import ArgumentParser, BooleanOptionalAction
 from functools import partial
 from math import log
 from os import makedirs
-from os.path import abspath, exists, join
+from os.path import exists, join
 
 import hyperopt.hp as hp
 import numpy as np
 import torch
 from hyperopt import STATUS_OK, fmin, tpe
-from ray.train import RunConfig
-from ray.tune import TuneConfig, Tuner, loguniform, quniform, uniform, with_parameters, with_resources
-from ray.tune.search.hyperopt import HyperOptSearch
 from sklearn.model_selection import StratifiedKFold
 from torch.utils.data import Subset
 from tqdm import tqdm
@@ -259,100 +256,6 @@ def tune(model: str):
     log_file.close()
 
 
-def tune_ray(model: str):
-    """Tune a model for CIFAR-10 using Ray Tune's Hyperopt.
-
-    Not used in my work but may be useful for distributed tuning.
-
-    :param model: The model to tune, one of: {HebbNet, SoftHebb}.
-    """
-
-    makedirs(f"tuning/{model}", exist_ok=True)
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-
-    # Load CIFAR-10.
-    training, validation, _ = load('CIFAR10', validation=True, seed=113813032024)
-
-    def objective(configuration: dict, model_type: str, train_data: Subset, val_data: Subset, dev: str):
-        """Objective used for tuning.
-
-        :param configuration: The hyperparameter settings.
-        :param model_type: The model type, one of {HebbNet, SoftHebb}.
-        :param train_data: The training data.
-        :param val_data: The validation data.
-        :param dev: The device to use for PyTorch training.
-        :return: The validation accuracy.
-        """
-
-        # Initialize model.
-        if model_type == "HebbNet":
-            encoder = HebbNetA(in_channels=3, config=configuration)
-        elif model_type == "SoftHebb":
-            encoder = SoftHebbNet(config=configuration)
-        else:
-            raise ValueError(f"Model {model_type} not found.")
-        classifier = Classifier(encoder.out_channels * (32 // 2 ** 3) ** 2, 10, dropout=configuration["dropout"])
-        m = train(encoder, classifier, train_data, int(configuration["n_epochs"]), 10, 64, alpha=configuration["alpha"])
-        accuracy = test(m, val_data, 256, dev)
-        return {"accuracy": accuracy}
-
-    storage_path = abspath(f"tuning/{model}")
-    name = "run"
-    run_config = RunConfig(storage_path=storage_path, name=name)
-    path = join(storage_path, name)
-
-    def conv_config():
-        """Generate the search space for a convolution.
-
-        :return: The search space.
-        """
-        return {"eta": loguniform(1e-4, 1), "tau_inv": uniform(0.1, 2), "p": uniform(0.1, 2)}
-
-    if model == "HebbNet":
-        search_space = {"n_channels": quniform(8, 40, 2), "alpha": loguniform(1e-4, 1), "dropout": uniform(0, 1),
-                        "n_epochs": quniform(1, 50, 1), "conv_1": conv_config(), "conv_2": conv_config(),
-                        "conv_3": conv_config()}
-    elif model == "SoftHebb":
-        search_space = {"n_channels": quniform(32, 160, 8), "alpha": loguniform(1e-4, 1), "dropout": uniform(0, 1),
-                        "n_epochs": quniform(1, 50, 1), "conv_1": conv_config(), "conv_2": conv_config(),
-                        "conv_3": conv_config()}
-    else:
-        raise ValueError(f"Model {model} not found.")
-    hyperopt = HyperOptSearch(metric="accuracy", mode="max", n_initial_points=50)
-    tune_config = TuneConfig(search_alg=hyperopt, num_samples=500)
-
-    obj = with_parameters(objective, type=model, train_data=training, val_data=validation, dev=device)
-    trainable = with_resources(obj, {"cpu": 1, "gpu": 1})
-    if Tuner.can_restore(path):
-        tuner = Tuner.restore(path, trainable, resume_errored=False, restart_errored=True)
-    else:
-        tuner = Tuner(trainable, param_space=search_space, tune_config=tune_config, run_config=run_config)
-    results = tuner.fit()
-
-    config = results.get_best_result(metric="accuracy", mode="max").config
-    print("Best configuration found:")
-    print(config)
-    with open(f"tuning/{model}/config.txt", 'w') as out:
-        print(config, file=out)
-
-    pickle.dump(results, open(f"tuning/{model}/results.pkl", 'wb'))
-    pickle.dump(config, open(f"tuning/{model}/config.pkl", 'wb'))
-
-    accuracies = []
-    with open(f"tuning/{model}/accuracies.csv", 'w') as out:
-        for i, result in enumerate(results):
-            if result.error:
-                print(f"Trial #{i} had an error:", result.error)
-                continue
-            elif "accuracy" not in result.metrics:
-                print(f"Trial #{i} has not finished.")
-                continue
-            else:
-                print(result.metrics["accuracy"], file=out)
-                accuracies.append(result.metrics["accuracy"])
-    pickle.dump(accuracies, open(f"tuning/{model}/accuracies.pkl", 'wb'))
-
-
 if __name__ == '__main__':
     # For command-line use.
     parser = ArgumentParser()
@@ -363,14 +266,10 @@ if __name__ == '__main__':
                         help="Turn on this option to cross-validate the best architectures from the specified run.")
     parser.add_argument('--tune', action=BooleanOptionalAction, help="Turn on this option to tune HebbNet-A or the "
                                                                      "SoftHebb network.")
-    parser.add_argument('--ray', action=BooleanOptionalAction, help="Turn on this option to tune using Ray Tune.")
     args = parser.parse_args()
 
     if args.tune:
-        if args.ray:
-            tune_ray(args.run)
-        else:
-            tune(args.run)
+        tune(args.run)
     elif args.cv:
         cross_validate(args.run)
     else:
