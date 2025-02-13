@@ -8,5 +8,5 @@ matplotlib~=3.8.2
 scipy~=1.12.0
 baycomp~=1.0.3
 seaborn~=0.13.2
-pillow~=10.2.0
 hyperopt~=0.2.7
+pillow~=11.1.0
